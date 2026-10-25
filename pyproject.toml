@@ -1,0 +1,19 @@
+[project]
+name = "openloggernet"
+version = "0.1.0"
+description = "Open replacement for parts of the Campbell Scientific LoggerNet toolchain: PakBus/BMP5 client, compiler runner and logger CLIs"
+readme = "README.md"
+requires-python = ">=3.15"
+dependencies = ["pyserial>=3.5"]
+
+[project.scripts]
+flash = "openloggernet.flash:main"
+read_values = "openloggernet.read_values:main"
+set_value = "openloggernet.set_value:main"
+collect_data = "openloggernet.collect_data:main"
+logger_clock = "openloggernet.logger_clock:main"
+comusb_capture = "openloggernet.comusb_capture:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
