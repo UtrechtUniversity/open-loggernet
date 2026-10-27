@@ -45,6 +45,14 @@ def find_port() -> str | None:
     return None
 
 
+def require_port() -> str:
+    """`find_port`, raising when no logger is attached."""
+    port = find_port()
+    if port is None:
+        raise PakBusError("no Campbell logger serial port found")
+    return port
+
+
 # --- framing ---------------------------------------------------------------
 
 SYNC = 0xBD  # frame delimiter
@@ -139,7 +147,7 @@ RECORD_TYPES = {
     6: ("int4", 4),
     7: ("fp2", 2),
     9: ("ieee4", 4),
-    11: ("ascii", None),   # length comes from the field's piece count
+    11: ("ascii", 1),      # length comes from the field's piece count
     14: ("nsec", 8),       # timestamp: seconds and nanoseconds since 1990
     17: ("bool", 1),
     18: ("ieee8", 8),
@@ -335,14 +343,14 @@ def parse_table_definitions(data: bytes) -> list:
 
 def decode_record(table: TableDef, buf: bytes) -> dict:
     """Unpack one packed record into {field name: value or list of values}."""
-    out = {}
+    out: dict[str, object] = {}
     at = 0
     for field in table.fields:
-        kind, width = RECORD_TYPES.get(field.type_code, (None, None))
-        if kind is None:
+        if field.type_code not in RECORD_TYPES:
             raise PakBusError(
                 f"{table.name}.{field.name}: field type {field.type_code} is not decoded; "
                 f"add it to RECORD_TYPES once its layout is confirmed on hardware")
+        kind, width = RECORD_TYPES[field.type_code]
         if kind == "ascii":
             raw = buf[at:at + field.piece]
             out[field.name] = raw.split(b"\0", 1)[0].decode("ascii", "replace")
@@ -394,7 +402,7 @@ def parse_collect_response(table: TableDef, body: bytes) -> tuple[int, list, boo
             raise PakBusError(f"{table.name}: partial-record block, which is not implemented")
         if first_begin is None:
             first_begin = begin
-        stamp = None
+        stamp = EPOCH
         for index in range(nbr):
             if table.is_interval:
                 if index == 0:
@@ -596,7 +604,6 @@ class PakBusLink:
         self._tran = 0
         self._buf = bytearray()
         self._port_name = port
-        self.port: serial.Serial | None = None
         self.model: str | None = None
         self.max_reply_frame: int | None = max_reply_frame
         self._limit_override = max_reply_frame is not None
@@ -610,10 +617,10 @@ class PakBusLink:
         self.model = port_model(self._port_name)
         if not self._limit_override:
             self.max_reply_frame = MAX_REPLY_FRAME.get(self.model or "")
-        self.port = serial.Serial(self._port_name, self.baudrate, timeout=0.1)
+        self.port: serial.Serial = serial.Serial(self._port_name, self.baudrate, timeout=0.1)
 
     def close(self) -> None:
-        if self.port is None:
+        if not hasattr(self, "port"):
             return
         try:
             self.port.close()
@@ -827,6 +834,7 @@ class PakBusLink:
 
         if value_type == "asciiz":
             return [data.split(b"\0", 1)[0].decode("ascii", "replace")]
+        assert fmt is not None and size is not None
         if len(data) != size * swath:
             raise PakBusError(
                 f"{table}.{field}: asked for {swath} value(s) as {value_type} and the logger "
@@ -985,7 +993,7 @@ class PakBusLink:
         forward by anchoring a smaller window on the records already seen.
         """
         if self.max_reply_frame:
-            return self._collect_recent_limited(table, count)
+            return self._collect_recent_limited(table, count, self.max_reply_frame)
 
         # Find the largest window the logger will answer. Halving alone undershoots -- asking
         # for 14 when 6 exist would settle on 3 and silently drop half the records -- so the
@@ -1033,7 +1041,7 @@ class PakBusLink:
             collected.extend(fresh)
         return collected
 
-    def _collect_recent_limited(self, table: TableDef, count: int) -> list:
+    def _collect_recent_limited(self, table: TableDef, count: int, max_frame: int) -> list:
         """`collect_recent` for a logger whose replies must fit `max_reply_frame`.
 
         The newest record is found with a one-record 'most recent' request, then fixed
@@ -1044,7 +1052,7 @@ class PakBusLink:
         """
         per_record = table.record_size + (0 if table.is_interval else 8)
         fixed = 1 + 8 + (8 if table.is_interval else 0) + 1
-        span = (reply_budget(self.max_reply_frame) - fixed) // per_record
+        span = (reply_budget(max_frame) - fixed) // per_record
         if span < 1:
             raise PakBusError(
                 f"{table.name}: one {table.record_size}-byte record does not fit this "

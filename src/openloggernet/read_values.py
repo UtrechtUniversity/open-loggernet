@@ -16,6 +16,7 @@ how you wait out a gated slow sequence without guessing when it fired.
 """
 
 import argparse
+import io
 import sys
 import time
 
@@ -72,7 +73,8 @@ def main() -> int:
     # A watch is meant to be redirected to a log and left running, and Python block-buffers
     # stdout when it is not a tty -- without this, a backgrounded watch shows nothing until it
     # exits, which for an unbounded watch means never.
-    sys.stdout.reconfigure(line_buffering=True)
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(line_buffering=True)
 
     port = args.port or find_port()
     if port is None:

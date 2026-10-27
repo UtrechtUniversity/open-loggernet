@@ -100,7 +100,7 @@ class CollectDataTests(unittest.TestCase):
             pakbus.parse_collect_response(self.table(60), b"\x07")
 
 
-class GrowingTable:
+class GrowingTable(pakbus.PakBusLink):
     """Stands in for a logger whose table keeps growing while it is being collected."""
 
     max_reply_frame = None
@@ -125,13 +125,13 @@ class CollectRecentTests(unittest.TestCase):
     def test_growth_during_collection_leaves_no_gap(self) -> None:
         table = pakbus.TableDef(2, "T", 100000, 14, 60, [], 0)
         link = GrowingTable(stored=500, page=7, grow_every=3)
-        records = pakbus.PakBusLink.collect_recent(link, table, 100000)
+        records = link.collect_recent(table, 100000)
         numbers = [r[0] for r in records]
         self.assertEqual(numbers, list(range(numbers[0], numbers[-1] + 1)))
         self.assertGreaterEqual(numbers[-1], 499)
 
 
-class LimitedLogger:
+class LimitedLogger(pakbus.PakBusLink):
     """Stands in for a logger whose replies are lost beyond `fits` records."""
 
     max_reply_frame, model = 64, "CR300"
@@ -165,7 +165,7 @@ class ReplyLimitTests(unittest.TestCase):
 
     def collect(self, logger, count) -> list:
         table = self.table([self.field(7)] * 3)  # three FP2 values, 6 bytes per record
-        return [r[0] for r in pakbus.PakBusLink._collect_recent_limited(logger, table, count)]
+        return [r[0] for r in logger._collect_recent_limited(table, count, 64)]
 
     def test_budget_leaves_room_for_quoting(self) -> None:
         self.assertEqual(pakbus.reply_budget(64), 43)
@@ -181,7 +181,7 @@ class ReplyLimitTests(unittest.TestCase):
     def test_record_wider_than_a_reply_is_refused(self) -> None:
         table = self.table([self.field(7)] * 40)
         with self.assertRaises(pakbus.PakBusError):
-            pakbus.PakBusLink._collect_recent_limited(LimitedLogger(0, 5, 3, True), table, 5)
+            LimitedLogger(0, 5, 3, True)._collect_recent_limited(table, 5, 64)
 
 
 if __name__ == "__main__":
