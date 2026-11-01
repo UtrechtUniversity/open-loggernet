@@ -20,8 +20,7 @@ from pathlib import Path
 import serial
 
 from . import cr6comp
-from .pakbus import (FILECTL_COMPILE_RUN_POWERUP, PakBusError, PakBusLink, TextFilter,
-                    find_port)
+from .pakbus import FILECTL_COMPILE_RUN_POWERUP, PakBusError, PakBusLink, TextFilter, find_port
 
 
 def compile_program(program: Path) -> bool:
@@ -94,10 +93,7 @@ def send_file(link: PakBusLink, source: Path, target: str) -> bool:
 def describe(stats: dict) -> str:
     if stats.get("resp_code"):
         return f"(get programming statistics failed, response code {stats['resp_code']})"
-    return (
-        f"OS {stats['os_version']}, serial {stats['serial_number']}, "
-        f"running {stats['program_name'] or '<none>'}"
-    )
+    return f"OS {stats['os_version']}, serial {stats['serial_number']}, running {stats['program_name'] or '<none>'}"
 
 
 def monitor(link: PakBusLink, seconds: float, send: bytes = b"") -> None:
@@ -128,29 +124,31 @@ def monitor(link: PakBusLink, seconds: float, send: bytes = b"") -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("program", type=Path, help="CRBasic program to send (.CR6)")
     parser.add_argument("--port", help="serial port (default: autodetected CR6)")
     parser.add_argument("--baudrate", type=int, default=115200)
-    parser.add_argument("--address", type=int, default=1,
-                        help="PakBus address of the logger (default: 1)")
-    parser.add_argument("--my-address", type=int, default=4094,
-                        help="PakBus address to use for this host (default: 4094)")
+    parser.add_argument("--address", type=int, default=1, help="PakBus address of the logger (default: 1)")
+    parser.add_argument(
+        "--my-address", type=int, default=4094, help="PakBus address to use for this host (default: 4094)"
+    )
     parser.add_argument("--drive", default="CPU:", help="target drive (default: CPU:)")
-    parser.add_argument("--no-compile", action="store_true",
-                        help="skip the CR6Comp.exe check and send the file as-is")
-    parser.add_argument("--no-includes", action="store_true",
-                        help="do not send the library files the program includes")
-    parser.add_argument("--no-run", action="store_true",
-                        help="write the file to the logger but do not compile and run it")
-    parser.add_argument("--monitor", type=float, metavar="SECONDS", default=0,
-                        help="after flashing, print ComUSB output for this long")
-    parser.add_argument("--send", metavar="TEXT", default="",
-                        help=r"text to write to ComUSB before monitoring, e.g. '\r' "
-                             "to make a menu-driven tester show its menu")
-    parser.add_argument("--timeout", type=float, default=60,
-                        help="seconds to wait for compile results (default: 60)")
+    parser.add_argument("--no-compile", action="store_true", help="skip the CR6Comp.exe check and send the file as-is")
+    parser.add_argument("--no-includes", action="store_true", help="do not send the library files the program includes")
+    parser.add_argument(
+        "--no-run", action="store_true", help="write the file to the logger but do not compile and run it"
+    )
+    parser.add_argument(
+        "--monitor", type=float, metavar="SECONDS", default=0, help="after flashing, print ComUSB output for this long"
+    )
+    parser.add_argument(
+        "--send",
+        metavar="TEXT",
+        default="",
+        help=r"text to write to ComUSB before monitoring, e.g. '\r' "
+        "to make a menu-driven tester show its menu",
+    )
+    parser.add_argument("--timeout", type=float, default=60, help="seconds to wait for compile results (default: 60)")
     parser.add_argument("--debug", action="store_true", help="dump PakBus packets")
     args = parser.parse_args()
 
@@ -174,8 +172,7 @@ def main() -> int:
     print(f"{program.name} -> {target} via {port}")
 
     try:
-        with PakBusLink(port, args.baudrate, node=args.address,
-                        my_node=args.my_address, debug=args.debug) as link:
+        with PakBusLink(port, args.baudrate, node=args.address, my_node=args.my_address, debug=args.debug) as link:
             if not link.hello():
                 print("logger did not answer the hello; trying the transfer anyway")
             print(describe(link.get_program_stats()))
@@ -197,14 +194,12 @@ def main() -> int:
             if code != 0:
                 print(f"file control failed, response code {code}", file=sys.stderr)
                 return 1
-            print(f"compiling and running {target}"
-                  + (f" (logger asked for {hold_off} s)" if hold_off else ""))
+            print(f"compiling and running {target}" + (f" (logger asked for {hold_off} s)" if hold_off else ""))
             time.sleep(max(hold_off, 2))
 
             path = reconnect(link, args.port)
             if path is None:
-                print("the logger's USB port did not come back after the compile",
-                      file=sys.stderr)
+                print("the logger's USB port did not come back after the compile", file=sys.stderr)
                 return 1
             if path != port:
                 print(f"logger came back on {path}")
@@ -230,8 +225,7 @@ def main() -> int:
             failed = "error" in stats["compile_result"].lower()
 
             if args.monitor:
-                monitor(link, args.monitor,
-                        args.send.encode().decode("unicode_escape").encode("ascii"))
+                monitor(link, args.monitor, args.send.encode().decode("unicode_escape").encode("ascii"))
 
             return 1 if failed else 0
     except PakBusError as exc:

@@ -18,9 +18,7 @@ from pathlib import Path
 
 COMPILER_BY_SUFFIX = {".cr6": "CR6Comp.exe", ".cr1x": "cr1000xcomp.exe"}
 
-DEFAULT_WINE = (
-    Path.home() / ".local" / "wine" / "Wine Devel.app" / "Contents" / "Resources" / "wine" / "bin" / "wine"
-)
+DEFAULT_WINE = Path.home() / ".local" / "wine" / "Wine Devel.app" / "Contents" / "Resources" / "wine" / "bin" / "wine"
 DEFAULT_WINEPREFIX = Path.home() / ".wine-cr6"
 
 

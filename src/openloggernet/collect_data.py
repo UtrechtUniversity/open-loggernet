@@ -16,7 +16,7 @@ import csv
 import itertools
 import sys
 
-from .pakbus import PakBusLink, PakBusError, find_port
+from .pakbus import PakBusError, PakBusLink, find_port
 
 
 def flatten(name: str, value) -> list[tuple[str, object]]:
@@ -36,8 +36,7 @@ def main() -> int:
 
     port = args.port or find_port()
     if port is None:
-        print("no Campbell logger serial port found; is it attached to this host or WSL?",
-              file=sys.stderr)
+        print("no Campbell logger serial port found; is it attached to this host or WSL?", file=sys.stderr)
         return 1
 
     with PakBusLink(port) as link:
@@ -52,8 +51,7 @@ def main() -> int:
             print(f"{'#':>3s}  {'table':22s} {'rec':>5s} {'interval':>9s} {'size':>8s}  fields")
             for t in tables:
                 interval = f"{t.interval_sec}s" if t.interval_sec else "event"
-                print(f"{t.number:3d}  {t.name:22s} {t.record_size:4d}B {interval:>9s} "
-                      f"{t.size:8d}  {len(t.fields)}")
+                print(f"{t.number:3d}  {t.name:22s} {t.record_size:4d}B {interval:>9s} {t.size:8d}  {len(t.fields)}")
             return 0
 
         table = next((t for t in tables if t.name.lower() == args.table.lower()), None)
@@ -90,8 +88,10 @@ def main() -> int:
         print(f"{len(rows)} record(s) from {table.name} -> {args.csv}")
         return 0
 
-    print(f"{table.name}: {len(rows)} record(s), "
-          f"{'interval ' + str(table.interval_sec) + 's' if table.is_interval else 'event driven'}")
+    print(
+        f"{table.name}: {len(rows)} record(s), "
+        f"{'interval ' + str(table.interval_sec) + 's' if table.is_interval else 'event driven'}"
+    )
     wide = len(columns) > 12
     for row in rows:
         head = f"  #{row['record']} {row['time']}"
@@ -101,9 +101,11 @@ def main() -> int:
             for line in itertools.batched(body, 6, strict=False):
                 print("      " + "  ".join(line))
         else:
-            print(head + "  " + "  ".join(
-                f"{c}={row[c]:.4g}" if isinstance(row[c], float) else f"{c}={row[c]}"
-                for c in columns[2:]))
+            print(
+                head
+                + "  "
+                + "  ".join(f"{c}={row[c]:.4g}" if isinstance(row[c], float) else f"{c}={row[c]}" for c in columns[2:])
+            )
     return 0
 
 

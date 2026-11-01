@@ -17,7 +17,7 @@ from .read_values import split_spec
 
 
 def parse_assignment(text: str) -> tuple[str, str, float | int, str]:
-    """"Public.DoRead=true" -> ("Public", "DoRead", -1, "long")."""
+    """ "Public.DoRead=true" -> ("Public", "DoRead", -1, "long")."""
     if "=" not in text:
         raise ValueError(f"{text!r} is not Table.Field=value")
     spec, raw = text.split("=", 1)

@@ -119,10 +119,10 @@ EPOCH = datetime.datetime(1990, 1, 1, tzinfo=datetime.UTC)
 # variables of known type and value; docs/pakbus.md
 # records how. Everything below is what this repository has confirmed, not the
 # full BMP5 type table.
-TYPE_INT4 = 6       # 4-byte signed, big-endian. Exact for `As Long`.
-TYPE_IEEE4B = 9     # 4-byte IEEE, big-endian. Exact for Float/IEEE4.
-TYPE_ASCIIZ = 16    # the logger's own formatting, NUL-terminated.
-TYPE_IEEE8B = 18    # 8-byte IEEE, big-endian.
+TYPE_INT4 = 6  # 4-byte signed, big-endian. Exact for `As Long`.
+TYPE_IEEE4B = 9  # 4-byte IEEE, big-endian. Exact for Float/IEEE4.
+TYPE_ASCIIZ = 16  # the logger's own formatting, NUL-terminated.
+TYPE_IEEE8B = 18  # 8-byte IEEE, big-endian.
 
 # name -> (type code, struct format, bytes per value)
 VALUE_TYPES = {
@@ -147,16 +147,25 @@ RECORD_TYPES = {
     6: ("int4", 4),
     7: ("fp2", 2),
     9: ("ieee4", 4),
-    11: ("ascii", 1),      # length comes from the field's piece count
-    14: ("nsec", 8),       # timestamp: seconds and nanoseconds since 1990
+    11: ("ascii", 1),  # length comes from the field's piece count
+    14: ("nsec", 8),  # timestamp: seconds and nanoseconds since 1990
     17: ("bool", 1),
     18: ("ieee8", 8),
-    28: ("bool", 4),       # CRBasic Boolean
+    28: ("bool", 4),  # CRBasic Boolean
 }
 
 # struct format per numeric record type; bool, nsec and ascii are decoded by hand
-RECORD_FORMATS = {"uint1": "B", "uint2": "H", "uint4": "L", "int1": "b", "int2": "h",
-                  "int4": "l", "fp2": "H", "ieee4": "f", "ieee8": "d"}
+RECORD_FORMATS = {
+    "uint1": "B",
+    "uint2": "H",
+    "uint4": "L",
+    "int1": "b",
+    "int2": "h",
+    "int4": "l",
+    "fp2": "H",
+    "ieee4": "f",
+    "ieee8": "d",
+}
 
 # Types 2, 6, 7, 9 and 11 were confirmed by decoding known values back out of DailyPower,
 # Shunt_Data, PT1000_Data and TString_Data and matching them against the serial trace.
@@ -183,7 +192,7 @@ def decode_fp2(word: int) -> float:
     sign = -1.0 if word & 0x8000 else 1.0
     exponent = (word >> 13) & 0x03
     mantissa = word & 0x1FFF
-    return sign * mantissa / (10 ** exponent)
+    return sign * mantissa / (10**exponent)
 
 
 # Response codes seen on the wire from this logger are 0, 16 and 17; the other
@@ -332,12 +341,21 @@ def parse_table_definitions(data: bytes) -> list:
                 if value == 0:
                     break
                 dimensions.append(value)
-            fields.append(FieldDef(field_name, raw_type & 0x7F, bool(raw_type & 0x80),
-                                   processing, units, description, begin_index, piece,
-                                   dimensions))
+            fields.append(
+                FieldDef(
+                    field_name,
+                    raw_type & 0x7F,
+                    bool(raw_type & 0x80),
+                    processing,
+                    units,
+                    description,
+                    begin_index,
+                    piece,
+                    dimensions,
+                )
+            )
         offset += 1  # field list terminator
-        tables.append(TableDef(number, name, size, time_type, interval_sec, fields,
-                               signature(data[start:offset])))
+        tables.append(TableDef(number, name, size, time_type, interval_sec, fields, signature(data[start:offset])))
     return tables
 
 
@@ -349,20 +367,23 @@ def decode_record(table: TableDef, buf: bytes) -> dict:
         if field.type_code not in RECORD_TYPES:
             raise PakBusError(
                 f"{table.name}.{field.name}: field type {field.type_code} is not decoded; "
-                f"add it to RECORD_TYPES once its layout is confirmed on hardware")
+                f"add it to RECORD_TYPES once its layout is confirmed on hardware"
+            )
         kind, width = RECORD_TYPES[field.type_code]
         if kind == "ascii":
-            raw = buf[at:at + field.piece]
+            raw = buf[at : at + field.piece]
             out[field.name] = raw.split(b"\0", 1)[0].decode("ascii", "replace")
             at += field.piece
             continue
-        raw = buf[at:at + width * field.count]
+        raw = buf[at : at + width * field.count]
         at += width * field.count
         if kind == "bool":
             values = [byte != 0 for byte in raw[::width]]
         elif kind == "nsec":
-            values = [EPOCH + datetime.timedelta(seconds=secs, microseconds=nanos / 1000)
-                      for secs, nanos in struct.iter_unpack(">LL", raw)]
+            values = [
+                EPOCH + datetime.timedelta(seconds=secs, microseconds=nanos / 1000)
+                for secs, nanos in struct.iter_unpack(">LL", raw)
+            ]
         else:
             values = [value for (value,) in struct.iter_unpack(">" + RECORD_FORMATS[kind], raw)]
             if kind == "fp2":
@@ -414,14 +435,15 @@ def parse_collect_response(table: TableDef, body: bytes) -> tuple[int, list, boo
                 secs, nanos = struct.unpack_from(">LL", body, at)
                 at += 8
                 when = EPOCH + datetime.timedelta(seconds=secs, microseconds=nanos / 1000)
-            chunk = body[at:at + table.record_size]
+            chunk = body[at : at + table.record_size]
             at += table.record_size
             if len(chunk) < table.record_size or at > end:
                 raise PakBusError(
                     f"{table.name}: record {begin + index} is {table.record_size} bytes and did "
                     f"not fit the response. Records larger than one packet need Collect Data's "
                     f"partial-record mode, which is not implemented; read these fields with "
-                    f"read_values.py instead.")
+                    f"read_values.py instead."
+                )
             records.append((begin + index, when, decode_record(table, chunk)))
     return (first_begin or 0), records, bool(body[end])
 
@@ -432,6 +454,7 @@ def parse_collect_response(table: TableDef, body: bytes) -> tuple[int, list, boo
 @dataclass
 class FieldDef:
     """One field of a data table, as described by the logger's own `.TDF`."""
+
     name: str
     type_code: int
     read_only: bool
@@ -467,6 +490,7 @@ class FieldDef:
 class TableDef:
     """A data table. `number` is its 1-based position in the `.TDF`, which is what
     Collect Data addresses, and `signature` is over that table's own definition bytes."""
+
     number: int
     name: str
     size: int
@@ -593,9 +617,16 @@ def reply_budget(max_frame: int) -> int:
 class PakBusLink:
     """PakBus over a serial port (the logger USB port speaks PakBus directly)."""
 
-    def __init__(self, port: str, baudrate: int = 115200, *, node: int = 1,
-                 my_node: int = 4094, max_reply_frame: int | None = None,
-                 debug: bool = False):
+    def __init__(
+        self,
+        port: str,
+        baudrate: int = 115200,
+        *,
+        node: int = 1,
+        my_node: int = 4094,
+        max_reply_frame: int | None = None,
+        debug: bool = False,
+    ):
         """`max_reply_frame` overrides the reply limit looked up from the logger model."""
         self.node = node
         self.my_node = my_node
@@ -624,7 +655,7 @@ class PakBusLink:
             return
         try:
             self.port.close()
-        except (OSError, serial.SerialException):
+        except OSError, serial.SerialException:
             pass
 
     def __enter__(self) -> PakBusLink:
@@ -662,7 +693,7 @@ class PakBusLink:
                 if end < 0:
                     del self._buf[:start]
                     break
-                candidate = bytes(self._buf[start + 1:end])
+                candidate = bytes(self._buf[start + 1 : end])
                 del self._buf[:end]  # leave the trailing SYNC as the next start
                 if not candidate:
                     continue
@@ -690,8 +721,10 @@ class PakBusLink:
             if remaining <= 0:
                 hint = ""
                 if self.max_reply_frame:
-                    hint = (f"; a {self.model or 'logger'} reply longer than "
-                            f"{self.max_reply_frame} bytes is lost, see MAX_REPLY_FRAME")
+                    hint = (
+                        f"; a {self.model or 'logger'} reply longer than "
+                        f"{self.max_reply_frame} bytes is lost, see MAX_REPLY_FRAME"
+                    )
                 raise PakBusTimeout(f"timed out waiting for a response from the logger{hint}")
             reply = self.receive(remaining)
             if reply is None:
@@ -710,8 +743,7 @@ class PakBusLink:
             return reply
 
     def _answer_hello(self, request: Packet) -> None:
-        packet = header(request.src_node, self.my_node, PROTO_PAKCTRL,
-                        link_state=LINK_READY, expect_more=0x1)
+        packet = header(request.src_node, self.my_node, PROTO_PAKCTRL, link_state=LINK_READY, expect_more=0x1)
         packet += struct.pack(">BBBBH", MSG_HELLO_RESP, request.tran_nbr, 0x00, 0x02, 1800)
         self.send(packet)
 
@@ -723,8 +755,7 @@ class PakBusLink:
         """
         for _ in range(attempts):
             tran = self.next_tran()
-            packet = header(self.node, self.my_node, PROTO_PAKCTRL,
-                            link_state=LINK_RING, expect_more=0x1)
+            packet = header(self.node, self.my_node, PROTO_PAKCTRL, link_state=LINK_RING, expect_more=0x1)
             packet += struct.pack(">BBBBH", MSG_HELLO, tran, 0x00, 0x02, 1800)
             try:
                 self.transact(packet, tran, timeout)
@@ -761,13 +792,14 @@ class PakBusLink:
         stats["compile_result"], offset = read_asciiz(data, offset)
         return stats
 
-    def file_download(self, name: str, data: bytes, *, swath: int = DEFAULT_SWATH,
-                      progress=None, timeout: float = 20.0) -> int:
+    def file_download(
+        self, name: str, data: bytes, *, swath: int = DEFAULT_SWATH, progress=None, timeout: float = 20.0
+    ) -> int:
         """Write a file to the logger. Returns the final response code (0 = ok)."""
         tran = self.next_tran()
         offset = 0
         while True:
-            fragment = data[offset:offset + swath]
+            fragment = data[offset : offset + swath]
             close_flag = 1 if offset + len(fragment) >= len(data) else 0
             packet = header(self.node, self.my_node, PROTO_BMP5)
             packet += struct.pack(">BBH", MSG_FILEDOWNLOAD, tran, SECURITY_CODE)
@@ -786,8 +818,9 @@ class PakBusLink:
             if close_flag:
                 return 0
 
-    def get_values_raw(self, table: str, field: str, type_code: int, swath: int = 1,
-                       timeout: float = 10.0) -> tuple[int, bytes]:
+    def get_values_raw(
+        self, table: str, field: str, type_code: int, swath: int = 1, timeout: float = 10.0
+    ) -> tuple[int, bytes]:
         """Read `swath` consecutive values as `type_code`. Returns (response code, raw bytes).
 
         The logger converts to the requested type where it can, so more than one type code will
@@ -806,8 +839,9 @@ class PakBusLink:
             raise PakBusError(f"unexpected message type 0x{reply.msg_type:02x}")
         return reply.body[0], reply.body[1:]
 
-    def get_values(self, table: str, field: str, *, value_type: str = "asciiz",
-                   swath: int = 1, timeout: float = 10.0) -> list:
+    def get_values(
+        self, table: str, field: str, *, value_type: str = "asciiz", swath: int = 1, timeout: float = 10.0
+    ) -> list:
         """Read `swath` consecutive values from a running program. Raises on any failure.
 
         `value_type` is a key of VALUE_TYPES. "asciiz" is the safe default -- the logger
@@ -818,14 +852,14 @@ class PakBusLink:
         with an empty body, so the returned length is checked rather than trusted.
         """
         if value_type not in VALUE_TYPES:
-            raise ValueError(f"unknown value type {value_type!r}; "
-                             f"expected one of {', '.join(sorted(VALUE_TYPES))}")
+            raise ValueError(f"unknown value type {value_type!r}; expected one of {', '.join(sorted(VALUE_TYPES))}")
         if swath < 1:
             raise ValueError("swath must be at least 1")
         type_code, fmt, size = VALUE_TYPES[value_type]
         if value_type == "asciiz" and swath != 1:
-            raise ValueError("the asciiz type ignores swath and returns one value; "
-                             "use long, ieee4 or ieee8 to read an array")
+            raise ValueError(
+                "the asciiz type ignores swath and returns one value; use long, ieee4 or ieee8 to read an array"
+            )
 
         resp_code, data = self.get_values_raw(table, field, type_code, swath, timeout)
         if resp_code != 0:
@@ -839,11 +873,11 @@ class PakBusLink:
             raise PakBusError(
                 f"{table}.{field}: asked for {swath} value(s) as {value_type} and the logger "
                 f"returned {len(data)} bytes, not {size * swath} -- the field is probably not "
-                f"convertible to that type, or the swath runs past the end of the array")
+                f"convertible to that type, or the swath runs past the end of the array"
+            )
         return [value for (value,) in struct.iter_unpack(fmt, data)]
 
-    def set_values(self, table: str, field: str, values, *, value_type: str = "long",
-                   timeout: float = 10.0) -> None:
+    def set_values(self, table: str, field: str, values, *, value_type: str = "long", timeout: float = 10.0) -> None:
         """Write one or more consecutive values into a running program. Raises on any failure.
 
         The counterpart to `get_values`. `value_type` names the representation the values are
@@ -852,11 +886,11 @@ class PakBusLink:
         walks consecutive array elements from `field`.
         """
         if value_type not in VALUE_TYPES:
-            raise ValueError(f"unknown value type {value_type!r}; "
-                             f"expected one of {', '.join(sorted(VALUE_TYPES))}")
+            raise ValueError(f"unknown value type {value_type!r}; expected one of {', '.join(sorted(VALUE_TYPES))}")
         if value_type == "asciiz":
-            raise ValueError("set_values needs an explicit numeric type; "
-                             "the logger is not asked to parse its own formatting")
+            raise ValueError(
+                "set_values needs an explicit numeric type; the logger is not asked to parse its own formatting"
+            )
         if isinstance(values, (int, float)):
             values = [values]
         if not values:
@@ -881,8 +915,7 @@ class PakBusLink:
             meaning = SETVALUES_RESP.get(resp_code, "unrecognised response code")
             raise PakBusError(f"{table}.{field}: {meaning} (response code {resp_code})")
 
-    def clock(self, adjust_sec: int = 0, adjust_nsec: int = 0,
-              timeout: float = 10.0) -> datetime.datetime:
+    def clock(self, adjust_sec: int = 0, adjust_nsec: int = 0, timeout: float = 10.0) -> datetime.datetime:
         """Read the logger clock, optionally adjusting it first.
 
         A zero adjustment is a pure read. Returns the logger time **as it was before** any
@@ -904,8 +937,7 @@ class PakBusLink:
         seconds, nanos = struct.unpack_from(">lL", reply.body, 1)
         return EPOCH + datetime.timedelta(seconds=seconds, microseconds=nanos / 1000)
 
-    def file_upload(self, name: str, *, swath: int = 400, offset: int = 0,
-                    timeout: float = 20.0) -> bytes:
+    def file_upload(self, name: str, *, swath: int = 400, offset: int = 0, timeout: float = 20.0) -> bytes:
         """Read a file off the logger. Returns its bytes.
 
         `.TDF` is the table definitions pseudo-file, which is what makes stored records
@@ -952,25 +984,20 @@ class PakBusLink:
         """Fetch and parse the logger's `.TDF`. Table numbers and signatures come from here."""
         return parse_table_definitions(self.file_upload(".TDF", timeout=timeout))
 
-    def _collect_fragment(self, table: TableDef, count: int,
-                          timeout: float = 25.0) -> tuple[int, list, bool]:
+    def _collect_fragment(self, table: TableDef, count: int, timeout: float = 25.0) -> tuple[int, list, bool]:
         """One Collect Data request for the most recent `count` records.
 
         Returns (first record number, decoded records, more-records flag). An empty list
         means the logger declined the window, which is what it does when `count` exceeds the
         records actually stored -- it returns a bare response code rather than a short answer.
         """
-        return self._collect_request(table, COLLECT_MOST_RECENT, struct.pack(">L", count),
-                                     timeout)
+        return self._collect_request(table, COLLECT_MOST_RECENT, struct.pack(">L", count), timeout)
 
-    def _collect_range(self, table: TableDef, begin: int, end: int,
-                       timeout: float = 5.0) -> list:
+    def _collect_range(self, table: TableDef, begin: int, end: int, timeout: float = 5.0) -> list:
         """Records `begin` up to but not including `end`, as far as the logger holds them."""
-        return self._collect_request(table, COLLECT_RANGE, struct.pack(">LL", begin, end),
-                                     timeout)[1]
+        return self._collect_request(table, COLLECT_RANGE, struct.pack(">LL", begin, end), timeout)[1]
 
-    def _collect_request(self, table: TableDef, mode: int, params: bytes,
-                         timeout: float) -> tuple[int, list, bool]:
+    def _collect_request(self, table: TableDef, mode: int, params: bytes, timeout: float) -> tuple[int, list, bool]:
         tran = self.next_tran()
         packet = header(self.node, self.my_node, PROTO_BMP5)
         packet += struct.pack(">BBH", MSG_COLLECTDATA, tran, SECURITY_CODE)
@@ -1037,7 +1064,8 @@ class PakBusLink:
             if fresh[0][0] != last + 1:
                 raise PakBusError(
                     f"{table.name}: records {last + 1}..{fresh[0][0] - 1} were skipped; the table "
-                    f"grew by more than {COLLECT_OVERLAP} records between two requests")
+                    f"grew by more than {COLLECT_OVERLAP} records between two requests"
+                )
             collected.extend(fresh)
         return collected
 
@@ -1056,7 +1084,8 @@ class PakBusLink:
         if span < 1:
             raise PakBusError(
                 f"{table.name}: one {table.record_size}-byte record does not fit this "
-                f"{self.model or 'logger'}'s {self.max_reply_frame}-byte reply; use Get Values")
+                f"{self.model or 'logger'}'s {self.max_reply_frame}-byte reply; use Get Values"
+            )
 
         _, newest, _ = self._collect_fragment(table, 1, timeout=5.0)
         if not newest:

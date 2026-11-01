@@ -273,4 +273,3 @@ decoding has been confirmed by reading a known value back.
 
 Campbell FP2 is a sign bit, a 2-bit negative decimal exponent and a 13-bit mantissa, with `0x9FFE`
 for NaN and `0x1FFF`/`0x9FFF` for the infinities.
-

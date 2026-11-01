@@ -68,22 +68,16 @@ def serve(args: argparse.Namespace) -> int:
     thread: threading.Thread | None = None
     try:
         with ExitStack() as stack:
-            port = stack.enter_context(
-                serial.Serial(port_name, args.baud, timeout=0.1)
-            )
+            port = stack.enter_context(serial.Serial(port_name, args.baud, timeout=0.1))
             log = stack.enter_context(open(args.log, "a", buffering=1))
             raw = (
-                stack.enter_context(
-                    open(str(args.log) + ".hex", "a", buffering=1, encoding="ascii")
-                )
+                stack.enter_context(open(str(args.log) + ".hex", "a", buffering=1, encoding="ascii"))
                 if args.rawlog
                 else None
             )
             log.write(f"\n[{now()}] === opened {port_name} @ {args.baud} 8N1 ===\n")
 
-            thread = threading.Thread(
-                target=reader, args=(port, log, stop, raw), daemon=True
-            )
+            thread = threading.Thread(target=reader, args=(port, log, stop, raw), daemon=True)
             thread.start()
             fifo_fd = os.open(fifo, os.O_RDWR | os.O_NONBLOCK)
 

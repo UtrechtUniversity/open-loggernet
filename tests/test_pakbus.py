@@ -3,8 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from openloggernet import flash
-from openloggernet import pakbus
+from openloggernet import flash, pakbus
 
 
 class PakBusTests(unittest.TestCase):
@@ -141,8 +140,7 @@ class LimitedLogger(pakbus.PakBusLink):
         self.below_oldest_empty = below_oldest_empty
 
     def _records(self, begin, end):
-        return [(n, None, {"Value": float(n)})
-                for n in range(max(begin, self.oldest), min(end, self.newest + 1))]
+        return [(n, None, {"Value": float(n)}) for n in range(max(begin, self.oldest), min(end, self.newest + 1))]
 
     def _collect_fragment(self, table, count, timeout=25.0):
         return self.newest, self._records(self.newest, self.newest + 1), False

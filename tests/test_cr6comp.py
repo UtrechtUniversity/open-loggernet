@@ -20,18 +20,19 @@ class Cr6CompTests(unittest.TestCase):
 
     def test_compiled_requires_success_line_and_no_failure(self) -> None:
         self.assertTrue(cr6comp.compiled("Main.CR6 -- Compiled in SequentialMode."))
-        self.assertTrue(cr6comp.compiled(
-            "Main.CR6 -- Compiled in SequentialMode.\nWarning: Table T, is declared but never called."
-        ))
-        self.assertFalse(cr6comp.compiled(
-            "Broken.CR6 -- Compile Failed!\n\nline 222: Invalid, or out of place expression"
-        ))
+        self.assertTrue(
+            cr6comp.compiled("Main.CR6 -- Compiled in SequentialMode.\nWarning: Table T, is declared but never called.")
+        )
+        self.assertFalse(
+            cr6comp.compiled("Broken.CR6 -- Compile Failed!\n\nline 222: Invalid, or out of place expression")
+        )
         self.assertFalse(cr6comp.compiled(""))
 
     def test_darwin_command_uses_wine_override_and_default_prefix(self) -> None:
         with tempfile.NamedTemporaryFile() as wine:
-            environment = {key: value for key, value in os.environ.items()
-                           if key not in ("WINEPREFIX", "WINEDEBUG", "CR6COMP")}
+            environment = {
+                key: value for key, value in os.environ.items() if key not in ("WINEPREFIX", "WINEDEBUG", "CR6COMP")
+            }
             environment["CR6_WINE"] = wine.name
             with mock.patch.dict(os.environ, environment, clear=True):
                 self.assertTrue(cr6comp.available("darwin"))
@@ -42,8 +43,7 @@ class Cr6CompTests(unittest.TestCase):
 
     def test_extension_selects_logger_compiler(self) -> None:
         self.assertEqual(cr6comp.compiler_for(self.main).name, "CR6Comp.exe")
-        self.assertEqual(cr6comp.compiler_for(self.main.with_name("FinAppAcceptance.CR1X")).name,
-                         "cr1000xcomp.exe")
+        self.assertEqual(cr6comp.compiler_for(self.main.with_name("FinAppAcceptance.CR1X")).name, "cr1000xcomp.exe")
         with self.assertRaises(ValueError):
             cr6comp.compiler_for(self.main.with_name("Lib.crb"))
 
@@ -52,8 +52,10 @@ class Cr6CompTests(unittest.TestCase):
             program = Path(elsewhere) / "Main.CR6"
             with self.assertRaises(FileNotFoundError):
                 cr6comp.compiler_for(program)
-            with mock.patch.dict(os.environ, {"CR6COMP": "opencrbasic"}), \
-                    mock.patch("importlib.util.find_spec", return_value=None):
+            with (
+                mock.patch.dict(os.environ, {"CR6COMP": "opencrbasic"}),
+                mock.patch("importlib.util.find_spec", return_value=None),
+            ):
                 ok, output = cr6comp.compile_program(program)
         self.assertFalse(ok)
         self.assertIn("needs the opencrbasic package", output)
@@ -70,15 +72,16 @@ class Cr6CompTests(unittest.TestCase):
         with tempfile.NamedTemporaryFile() as wine:
             environment = {key: value for key, value in os.environ.items() if key != "CR6COMP"}
             environment["CR6_WINE"] = wine.name
-            with mock.patch.dict(os.environ, environment, clear=True), \
-                    mock.patch("shutil.which", return_value=None):
+            with mock.patch.dict(os.environ, environment, clear=True), mock.patch("shutil.which", return_value=None):
                 self.assertTrue(cr6comp.available("linux"))
                 args, _ = cr6comp.command(self.main, "linux")
         self.assertEqual(args, [wine.name, str(cr6comp.compiler_for(self.main)), "Main.CR6"])
 
     def test_opencrbasic_runs_native_module(self) -> None:
-        with mock.patch.dict(os.environ, {"CR6COMP": "opencrbasic"}), \
-                mock.patch("importlib.util.find_spec", return_value=object()):
+        with (
+            mock.patch.dict(os.environ, {"CR6COMP": "opencrbasic"}),
+            mock.patch("importlib.util.find_spec", return_value=object()),
+        ):
             self.assertTrue(cr6comp.available("linux"))
             args, _ = cr6comp.command(self.main, "linux")
         self.assertEqual(args[1:], ["-m", "opencrbasic", "--no-message-file", "Main.CR6"])

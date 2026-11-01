@@ -11,7 +11,7 @@ import datetime
 import sys
 import time
 
-from .pakbus import PakBusLink, PakBusError, find_port
+from .pakbus import PakBusError, PakBusLink, find_port
 
 
 def main() -> int:
@@ -48,8 +48,7 @@ def main() -> int:
 
         print(f"logger      {logger.isoformat(timespec='milliseconds')}")
         print(f"host UTC    {host.isoformat(timespec='milliseconds')}")
-        print(f"offset      {offset:+.3f} s   (logger minus host, round trip "
-              f"{after - before:.3f} s)")
+        print(f"offset      {offset:+.3f} s   (logger minus host, round trip {after - before:.3f} s)")
 
         if not args.set_utc:
             return 0
