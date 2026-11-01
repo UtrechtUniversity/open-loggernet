@@ -17,7 +17,7 @@ Only the transactions this repository's bench tooling needs are implemented:
     File Upload        (BMP5    0x1d / 0x9d)  read a file off the logger, incl. `.TDF`
     Collect Data       (BMP5    0x09 / 0x89)  read stored data table records
 
-Wire-format notes and sources: ../references/pakbus/protocol-notes.md
+Wire-format notes and sources: docs/pakbus.md
 """
 
 import datetime
@@ -33,7 +33,7 @@ def find_port() -> str | None:
     """Locate a Campbell logger's USB serial port by its USB manufacturer string, on Linux or macOS.
 
     Looked up afresh on every call: the logger re-enumerates when it compiles a newly sent
-    program and can come back on a different node (../references/pakbus/protocol-notes.md).
+    program and can come back on a different node (docs/pakbus.md).
     """
     ports = sorted(list_ports.comports(), key=lambda port: port.device)
     for port in ports:
@@ -107,7 +107,7 @@ FILECTL_STOP = 7
 FILECTL_STOP_DELETE_DATA = 8
 FILECTL_COMPILE_RUN_KEEP_POWERUP = 10
 
-DEFAULT_SWATH = 256  # file bytes per download packet; knowledge/crbasic/lessons.md
+DEFAULT_SWATH = 256  # file bytes per download packet; docs/lessons.md
 
 # The logger reports time as signed seconds and nanoseconds since this epoch.
 EPOCH = datetime.datetime(1990, 1, 1, tzinfo=datetime.UTC)
@@ -116,7 +116,7 @@ EPOCH = datetime.datetime(1990, 1, 1, tzinfo=datetime.UTC)
 # The logger converts a field to whatever type is asked for, where it can, so
 # the type code chooses the representation rather than describing the field.
 # These four were established on the bench (2026-08-31) by reading Public
-# variables of known type and value; ../references/pakbus/protocol-notes.md
+# variables of known type and value; docs/pakbus.md
 # records how. Everything below is what this repository has confirmed, not the
 # full BMP5 type table.
 TYPE_INT4 = 6       # 4-byte signed, big-endian. Exact for `As Long`.
@@ -516,7 +516,7 @@ class TextFilter:
 
     The logger beacons PakBus frames on ComUSB even while a running program
     owns the port, and they interleave mid-line with the program's own output
-    (knowledge/crbasic/lessons.md). Frames are dropped; anything that fails to
+    (docs/lessons.md). Frames are dropped; anything that fails to
     check out as a frame is passed through as text, so a lost delimiter costs
     at most one garbled line instead of swallowing the rest of the session.
     """
@@ -556,7 +556,7 @@ class TextFilter:
 # Largest reply frame, SYNC bytes included, that reaches the host intact, by USB product string.
 # Only the first 64-byte USB packet of a CR300 reply reached this client; the CR350 entry is
 # assumed. LoggerNet is much faster on the same logger, so this is a workaround pending research:
-# ../references/pakbus/protocol-notes.md, "CR300 replies cut at 64 bytes". Models not listed
+# docs/pakbus.md, "CR300 replies cut at 64 bytes". Models not listed
 # (CR6, CR1000X) need none; the CR6 answers with replies of about 1 KB.
 MAX_REPLY_FRAME = {"CR300": 64, "CR350": 64}
 

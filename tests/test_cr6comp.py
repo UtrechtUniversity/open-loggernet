@@ -12,7 +12,7 @@ class Cr6CompTests(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
-        for name in ("compiler/CR6Comp.exe", "compiler/cr1000xcomp.exe", "opencrbasic/src/opencrbasic/__init__.py"):
+        for name in ("compiler/CR6Comp.exe", "compiler/cr1000xcomp.exe"):
             (self.root / name).parent.mkdir(parents=True, exist_ok=True)
             (self.root / name).touch()
         (self.root / "crbasic").mkdir()
@@ -52,10 +52,11 @@ class Cr6CompTests(unittest.TestCase):
             program = Path(elsewhere) / "Main.CR6"
             with self.assertRaises(FileNotFoundError):
                 cr6comp.compiler_for(program)
-            with mock.patch.dict(os.environ, {"CR6COMP": "opencrbasic"}):
+            with mock.patch.dict(os.environ, {"CR6COMP": "opencrbasic"}), \
+                    mock.patch("importlib.util.find_spec", return_value=None):
                 ok, output = cr6comp.compile_program(program)
         self.assertFalse(ok)
-        self.assertIn("no opencrbasic/src", output)
+        self.assertIn("needs the opencrbasic package", output)
 
     def test_missing_wine_override_is_unavailable(self) -> None:
         environment = {key: value for key, value in os.environ.items() if key != "CR6COMP"}
@@ -76,11 +77,11 @@ class Cr6CompTests(unittest.TestCase):
         self.assertEqual(args, [wine.name, str(cr6comp.compiler_for(self.main)), "Main.CR6"])
 
     def test_opencrbasic_runs_native_module(self) -> None:
-        with mock.patch.dict(os.environ, {"CR6COMP": "opencrbasic"}):
+        with mock.patch.dict(os.environ, {"CR6COMP": "opencrbasic"}), \
+                mock.patch("importlib.util.find_spec", return_value=object()):
             self.assertTrue(cr6comp.available("linux"))
-            args, env = cr6comp.command(self.main, "linux")
+            args, _ = cr6comp.command(self.main, "linux")
         self.assertEqual(args[1:], ["-m", "opencrbasic", "--no-message-file", "Main.CR6"])
-        self.assertIn(str(self.root.resolve() / "opencrbasic" / "src"), env["PYTHONPATH"])
 
 
 if __name__ == "__main__":

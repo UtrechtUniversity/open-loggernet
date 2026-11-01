@@ -98,7 +98,7 @@ def main() -> int:
         if wide:
             print(head)
             body = [f"{c}={row[c]}" for c in columns[2:]]
-            for line in itertools.batched(body, 6):
+            for line in itertools.batched(body, 6, strict=False):
                 print("      " + "  ".join(line))
         else:
             print(head + "  " + "  ".join(

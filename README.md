@@ -1,19 +1,36 @@
 # openloggernet
 
-An open replacement for the parts of the Campbell Scientific LoggerNet toolchain this project
-uses: a PakBus/BMP5 client, a runner for Campbell's CRBasic compilers, and command-line tools that
-flash programs to a logger and read, set and collect its values. It is a standalone uv package with
-its own environment and depends on nothing else in this repository; `scripts/` installs it as a
-path dependency.
+An open replacement for the parts of the Campbell Scientific LoggerNet toolchain that the
+[FirnMelt stations](https://github.com/UtrechtUniversity/firnmelt-station) use: a PakBus/BMP5
+client, a runner for Campbell's CRBasic compilers, and command-line tools that flash programs to a
+logger and read, set and collect its values. It is not affiliated with Campbell Scientific.
 
 ```bash
-cd openloggernet
-uv sync
-uv run python -m unittest discover -s tests
+pip install openloggernet        # or: uv tool install openloggernet
 ```
 
-`.python-version` pins Python 3.15. The commands are installed as console scripts
-(`uv run flash`, `uv run read_values`, ...) and as modules (`python -m openloggernet.flash`).
+The commands are installed as console scripts (`flash`, `read_values`, ...) and as modules
+(`python -m openloggernet.flash`). Python 3.15 or newer is required.
+
+## Development
+
+```bash
+uv sync                          # creates .venv with the dev tools
+uv run pre-commit install        # ruff, pyrefly and file hygiene on every commit
+uv run pre-commit run --all-files
+uv run pytest
+```
+
+CI (`.github/workflows/ci.yml`) runs the same checks on every push and pull request. Agent and
+contributor conventions are in [AGENTS.md](AGENTS.md).
+
+## Releasing
+
+Every push to `dev` that passes CI is published to [TestPyPI](https://test.pypi.org/p/openloggernet)
+as `<version>.dev<run number>`. A push to `main` publishes to [PyPI](https://pypi.org/p/openloggernet)
+when the `version` in `pyproject.toml` has not been released yet, so bump it (`uv version --bump
+patch`) in the change that should be released. Publishing uses PyPI trusted publishing from the
+`pypi` and `testpypi` GitHub environments; no API token is stored in the repository.
 
 | Module | What it does |
 |---|---|
@@ -22,14 +39,14 @@ uv run python -m unittest discover -s tests
 | `set_value` | Set `Public` variables on a running CR6; how testers are driven. |
 | `collect_data` | Read stored data table records off a running CR6. |
 | `logger_clock` | Read the CR6 clock, or set it to the host's UTC time. |
-| `cr6comp` | Runs `compiler/CR6Comp.exe` (`.CR6`) or `compiler/cr1000xcomp.exe` (`.CR1X`) through `powershell.exe` (WSL) or Wine (macOS, Linux); used by `flash` and `scripts/verify.py`. Not a script. |
+| `cr6comp` | Runs `compiler/CR6Comp.exe` (`.CR6`) or `compiler/cr1000xcomp.exe` (`.CR1X`) through `powershell.exe` (WSL) or Wine (macOS, Linux); used by `flash`. Not a script. |
 | `pakbus` | PakBus/BMP5 client library used by `flash`, `read_values` and `logger_clock`. Not a script. |
 | `comusb_capture` | Captures timestamped tester output and sends keys through a FIFO. |
 
 For a long interactive tester session:
 
 ```bash
-uv run comusb_capture --log run.log --fifo /tmp/cr6.key
+comusb_capture --log run.log --fifo /tmp/cr6.key
 printf '1' > /tmp/cr6.key
 ```
 
@@ -39,12 +56,14 @@ printf '1' > /tmp/cr6.key
 
 `cr6comp` runs `CR6Comp.exe` through `powershell.exe` on WSL and through Wine on macOS and
 Linux (on Ubuntu: `dpkg --add-architecture i386 && apt-get install wine32:i386 wine64 wine`).
-The compilers are not part of this package: `compiler/` (and, for `CR6COMP=opencrbasic`,
-`opencrbasic/src`) is looked up in the program's directory and then each parent, so a program under
-`crbasic/` in this repository finds `../compiler/`.
-`CR6COMP=opencrbasic` uses the native re-implementation in `opencrbasic/src` instead; it reproduces
-CR6Comp's output for the FirnMelt programs but is not the
-reference compiler, so keep the exe as the gate before flashing hardware.
+The compilers are Campbell's and are not part of this package: `compiler/` is looked up in the
+program's directory and then each parent, so a program under `crbasic/` finds `../compiler/`. Copy
+`CR6Comp.exe` (and `cr1000xcomp.exe` for `.CR1X`) there from a CRBasic Editor or Device
+Configuration Utility install.
+`CR6COMP=opencrbasic` uses the native re-implementation from the
+[opencrbasic](https://github.com/UtrechtUniversity/open-crbasic) package instead (`pip install
+opencrbasic`); it reproduces CR6Comp's output for the FirnMelt programs but is not the reference
+compiler, so keep the exe as the gate before flashing hardware.
 
 ## Compiling on macOS
 
@@ -62,16 +81,16 @@ curl -L https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.17/wine-
 `cr6comp` looks for Wine in `$CR6_WINE`, then at
 `~/.local/wine/Wine Devel.app/Contents/Resources/wine/bin/wine`, then as `wine` on `PATH`. It
 uses the prefix `~/.wine-cr6` unless `WINEPREFIX` is set; Wine creates it on first use, which takes
-about 15 s. `scripts/verify.py` and `flash` then compile exactly as on WSL.
+about 15 s. `flash` then compiles exactly as on WSL.
 
 Checked on 2026-09-23 with Wine 11.17 on an arm64 Mac: every entry program compiled; a syntax error
 in a `.CR6` or in an included `.crb` gave `Compile Failed!` with its line and exit status 1; and the
-tree at commit `da10004` reproduced the PipelineMode results its bench captures record. The
+FirnMelt tree at commit `da10004` reproduced the PipelineMode results its bench captures record. The
 compiler writes `CR6cmple.xxx` into `crbasic/`, which git ignores.
 
 Checked on 2026-10-20 with Ubuntu's Wine 10.0 package (`10.0~repack-12ubuntu1`) on x86-64 Ubuntu
 26.04, installed with the command under [Compiling without Windows](#compiling-without-windows):
-`scripts/verify.py` compiled all 19 entry programs, `FinAppAcceptance.CR1X` included, with six warnings, all
+the FirnMelt `scripts/verify.py` compiled all 19 entry programs, `FinAppAcceptance.CR1X` included, with six warnings, all
 for tables declared but never called. The compile-failure path was not exercised on this host.
 
 ---
@@ -83,11 +102,10 @@ what makes a run's full-resolution data survive: the serial trace carries only w
 chose to print, and flashing deletes the tables.
 
 ```bash
-cd openloggernet
-uv run collect_data --list                         # the logger's tables, sizes and intervals
-uv run collect_data DailyPower                     # the power-profile decision history
-uv run collect_data Shunt_Data --count 60 --csv shunt.csv
-uv run collect_data TString_Data --count 5         # all 48 sensors per record
+collect_data --list                         # the logger's tables, sizes and intervals
+collect_data DailyPower                     # the power-profile decision history
+collect_data Shunt_Data --count 60 --csv shunt.csv
+collect_data TString_Data --count 5         # all 48 sensors per record
 ```
 
 Table definitions come from the logger's own `.TDF`, so field names, types and array shapes are
@@ -96,21 +114,20 @@ by page, each page re-anchored on the logger's newest record because the table k
 collection; a page that would leave a gap raises instead. Ten days of the 60 s `StationStatus` table
 takes a few minutes. Records whose size exceeds one packet -- `Status`,
 `Public`, `DataTableInfo` -- cannot be collected; read those with `read_values`. Details and the
-behaviours this depends on are in `../references/pakbus/protocol-notes.md`.
+behaviours this depends on are in [docs/pakbus.md](docs/pakbus.md).
 
 ---
 
 ## Setting the clock: `logger_clock`
 
-`architecture.md` derives every schedule index in `Main.CR6` from the logger's own clock and
-requires that clock to be UTC. The logger stores no time zone, so a logger left on local time
+The FirnMelt `Main.CR6` derives every schedule index from the logger's own clock and requires
+that clock to be UTC. The logger stores no time zone, so a logger left on local time
 silently shifts the whole grid, the daily aggregation boundary and the SBD send unit of day, with
 no symptom other than things happening at the wrong time.
 
 ```bash
-cd openloggernet
-uv run logger_clock                 # report logger time and its offset from host UTC
-uv run logger_clock --set-utc       # set it, then measure the result
+logger_clock                 # report logger time and its offset from host UTC
+logger_clock --set-utc       # set it, then measure the result
 ```
 
 The set is reported as an adjustment the logger applies to itself, so the transport delay is what
@@ -125,9 +142,9 @@ non-zero if more than `--max-drift` seconds remain. The bench logger was found 7
 The counterpart to `read_values`, over `pakbus`'s Set Values transaction:
 
 ```bash
-uv run set_value Public.DoRead=true              # true/false are Booleans (-1/0)
-uv run set_value Public.ProfileOverride=0        # whole numbers go as Long
-uv run set_value Public.ForcedBattV=11.8         # anything else as IEEE4
+set_value Public.DoRead=true              # true/false are Booleans (-1/0)
+set_value Public.ProfileOverride=0        # whole numbers go as Long
+set_value Public.ForcedBattV=11.8         # anything else as IEEE4
 ```
 
 This is how testers are driven: `TDR_tester.CR6` has no key menu and acts on its `Do*` flags, and
@@ -145,10 +162,9 @@ logger's `CPU:` drive, tells the logger to compile and run it, and reads the log
 results back out.
 
 ```bash
-cd openloggernet
-uv run flash ../crbasic/PowerProfile_tester.CR6                     # compile, send, run
-uv run flash ../crbasic/PowerProfile_tester.CR6 --monitor 60 --send '\r'
-uv run flash ../crbasic/Main.CR6 --no-run                           # write the file only
+flash ../crbasic/PowerProfile_tester.CR6                     # compile, send, run
+flash ../crbasic/PowerProfile_tester.CR6 --monitor 60 --send '\r'
+flash ../crbasic/Main.CR6 --no-run                           # write the file only
 ```
 
 The `--monitor` window prints whatever the running program writes to `ComUSB`, so a flash and the
@@ -159,8 +175,7 @@ Exit status is 0 only when the logger reports a clean compile; a compile error o
 printed and returns 1.
 
 A `.CR1X` program is compiled with `cr1000xcomp.exe` and sent the same way to the bench CR1000X.
-Files go in 256-byte packets; see `knowledge/crbasic/lessons.md`, "CR1000X file downloads need
-256-byte packets".
+Files go in 256-byte packets; see [docs/lessons.md](docs/lessons.md#cr1000x-file-downloads-need-256-byte-packets).
 
 ### Requirements
 
@@ -192,10 +207,9 @@ are exercised from a slow sequence, which produces no serial output at all**, so
 variables are unobservable while `Main.CR6` runs.
 
 ```bash
-cd openloggernet
-uv run read_values Public.PT1000_Temp_C Public.AmbientForDecision Status.SkippedScan
-uv run read_values --type long --swath 9 Public.PowerRTime     # an array
-uv run read_values --watch 30 Public.PT1000Ok                  # poll, print on change
+read_values Public.PT1000_Temp_C Public.AmbientForDecision Status.SkippedScan
+read_values --type long --swath 9 Public.PowerRTime     # an array
+read_values --watch 30 Public.PT1000Ok                  # poll, print on change
 ```
 
 Each argument is `Table.Field`. The `Public` table, the `Status` table and the program's own data
@@ -221,7 +235,7 @@ and is the right choice unless you need exact binary or an array.
 A `Boolean` read as `long` comes back from the logger as *response code 0 with an empty body* rather
 than as an error, so the library checks the returned byte count and raises instead of silently
 returning nothing. Read Booleans as `asciiz`. The wire format, the type codes and how each was
-established on the bench are in `../references/pakbus/protocol-notes.md`.
+established on the bench are in [docs/pakbus.md](docs/pakbus.md).
 
 ### Requirements
 
@@ -241,4 +255,4 @@ Sending a program is the same operation Device Configuration Utility performs: t
 disconnects and re-enumerates its USB device while it compiles — `flash` waits for it and
 reopens the port, which may be a different `/dev/ttyACM*` node than before.
 
-Protocol details and what has been verified on hardware: `../references/pakbus/protocol-notes.md`.
+Protocol details and what has been verified on hardware: [docs/pakbus.md](docs/pakbus.md).

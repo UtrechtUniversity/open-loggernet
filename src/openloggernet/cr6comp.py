@@ -1,14 +1,15 @@
 """Run the Campbell compiler from WSL (through powershell.exe) or macOS/Linux (through Wine).
 
-Set CR6COMP=opencrbasic to use the native re-implementation in opencrbasic/src instead of the exe.
-It reproduces CR6Comp's output for the FirnMelt programs but is not the reference compiler;
-see opencrbasic/PROGRESS.md for its verified scope.
+Set CR6COMP=opencrbasic to use the native re-implementation (the `opencrbasic` package, installed
+separately) instead of the exe. It reproduces CR6Comp's output for the FirnMelt programs but is not
+the reference compiler; see the opencrbasic README for its verified scope.
 
 The program's extension picks the compiler: `.CR6` uses compiler/CR6Comp.exe and `.CR1X` uses
-compiler/cr1000xcomp.exe. Both `compiler/` and `opencrbasic/src` are found in the program's
-directory or the nearest parent that has them. Used by flash.py. Not a script.
+compiler/cr1000xcomp.exe. `compiler/` is found in the program's directory or the nearest parent
+that has it. Used by flash.py. Not a script.
 """
 
+import importlib.util
 import os
 import shutil
 import subprocess
@@ -48,7 +49,7 @@ def native() -> bool:
 
 def available(platform: str = sys.platform) -> bool:
     if native():
-        return True
+        return importlib.util.find_spec("opencrbasic") is not None
     if platform == "darwin":
         return find_wine() is not None
     return shutil.which("powershell.exe") is not None or find_wine() is not None
@@ -69,16 +70,12 @@ def command(program: Path, platform: str = sys.platform) -> tuple[list[str], dic
     """Command line and environment that compile `program` from its own directory."""
     env = dict(os.environ)
     if native():
-        source = find_up(program.parent, "opencrbasic/src")
-        if source is None:
-            raise FileNotFoundError(f"{program.name}: no opencrbasic/src in its directory or a parent")
-        env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(source), env.get("PYTHONPATH")]))
         return [sys.executable, "-m", "opencrbasic", "--no-message-file", program.name], env
     compiler = compiler_for(program)
     if platform == "darwin" or shutil.which("powershell.exe") is None:
         wine = find_wine()
         if wine is None:
-            raise FileNotFoundError("Wine not found; see openloggernet/README.md, 'Compiling on macOS'")
+            raise FileNotFoundError("Wine not found; see the openloggernet README, 'Compiling on macOS'")
         env.setdefault("WINEPREFIX", str(DEFAULT_WINEPREFIX))
         env.setdefault("WINEDEBUG", "-all")
         return [wine, str(compiler), program.name], env
@@ -95,6 +92,8 @@ def compiled(output: str) -> bool:
 def compile_program(program: Path) -> tuple[bool, str]:
     """Compile `program`; returns (success, compiler output)."""
     if not available():
+        if native():
+            return False, "CR6COMP=opencrbasic needs the opencrbasic package: pip install opencrbasic"
         return False, "no CR6Comp.exe runner: needs powershell.exe (WSL) or Wine (macOS/Linux), or CR6COMP=opencrbasic"
     try:
         args, env = command(program)
