@@ -684,7 +684,9 @@ class PakBusLink:
         """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            chunk = self.port.read(512)
+            # Ask only for what is already buffered, or one byte. `read(512)` blocked until 512
+            # bytes or the port timeout, which put 100 ms on every short reply (docs/pakbus.md).
+            chunk = self.port.read(max(1, self.port.in_waiting))
             if chunk:
                 self._buf.extend(chunk)
             while SYNC in self._buf:
