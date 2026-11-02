@@ -175,6 +175,39 @@ compile result) after a version byte (0x11), then the model (asciiz), then for e
 uses. LoggerNet then reads one table's definition with File Upload of `<table>.TDF`, e.g.
 `Public.TDF`, rather than the whole `.TDF`.
 
+## Settings: the DevConfig protocol
+
+Device Configuration Utility 2.34 reads and writes settings with PakCtrl messages, not BMP5.
+Captured against the CR300 (serial 33590, OS 11.02) on 2026-11-02 and then used from `oln`
+against all three bench loggers. DevConfig used PakBus address 4089 for itself.
+
+| Message | Command | Response | Command body after message type and transaction |
+|---|---|---|---|
+| Get String Settings | `0x07` | `0x87` | names wanted (asciiz); empty = all |
+| Get Settings | `0x0F` | `0x8F` | security (uint2), then optionally `0x8000 \| last id` to continue |
+| Set Settings | `0x10` | `0x90` | security (uint2), per setting: id (uint2), length (uint2), value |
+| Control | `0x13` | `0x93` | security (uint2), action (byte); 1 = commit |
+
+* **Get String Settings** answers `Name=value;` text: `Company`, `Model`, `Password`, and the
+  `PakCtrlCodes` and `BMP5Codes` the logger supports. The CR300 leaves out the `;` after an empty
+  `Password=`.
+* **Get Settings** answers outcome (byte, 1 = ok), device type (uint2: CR300 69, CR6 55,
+  CR1000X 78), catalogue major and minor version (bytes), a more-settings flag (byte), then per
+  setting: id (uint2), a word whose bit 14 is read-only and whose low 14 bits are the value length,
+  and the value. With the flag set, the next request carries `0x8000 | the last id received`; the
+  CR6 gave 115 settings in the first reply and 145 in all.
+* **Set Settings** answers outcome (byte), then id (uint2) and outcome (byte) per setting; 1 is
+  accepted. **Control action 1** saves the settings and resets the logger, which DevConfig's
+  Apply does after a set. Station Name on the CR300 was changed this way by DevConfig, read back by
+  `oln`, and set back by `oln`.
+
+What a setting number means and how its value is laid out is not on the wire. DevConfig takes it
+from Campbell's device descriptions (`.dd`, `.ddi`) under `C:\Campbellsci\Lib\DevConfigLib\en2`,
+chosen by device type and catalogue major version. `openloggernet.settings` reads them from there
+when installed; they are not part of this repository. Strings are NUL-terminated; enums are one
+byte; `serial-no` is a uint4. The CR300's GOES settings use per-component offsets and are left as
+hex.
+
 ## CR6 behaviour observed while implementing this
 
 * **The logger disconnects and re-enumerates its USB device when it compiles a newly sent

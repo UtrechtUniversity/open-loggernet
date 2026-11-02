@@ -121,6 +121,16 @@ MSG_FILEUPLOAD = 0x1D
 MSG_FILEUPLOAD_RESP = 0x9D
 MSG_COLLECTDATA = 0x09
 MSG_COLLECTDATA_RESP = 0x89
+# PakCtrl messages Device Configuration Utility uses (USB capture against the CR300, 2026-11-02).
+MSG_GET_STRING_SETTINGS = 0x07  # -> 0x87 "Name=value;Name=value;"
+MSG_GET_STRING_SETTINGS_RESP = 0x87
+MSG_DEVCONFIG_GET = 0x0F  # -> 0x8F typed settings, by numeric id
+MSG_DEVCONFIG_GET_RESP = 0x8F
+MSG_DEVCONFIG_SET = 0x10
+MSG_DEVCONFIG_SET_RESP = 0x90
+MSG_DEVCONFIG_CONTROL = 0x13  # action 1 = commit the settings set and reset the logger
+MSG_DEVCONFIG_CONTROL_RESP = 0x93
+DEVCONFIG_COMMIT = 1
 
 # Collect Data modes. 'Most recent' serves loggers without a reply limit; modes 3 and 4 were
 # both answered with response code 7 by the CR6 on 2026-09-05. A record-number range serves
@@ -948,6 +958,78 @@ class PakBusLink:
         if offset < len(data):
             stats["station_name"], offset = read_asciiz(data, offset)
         return stats
+
+    def _pakctrl(self, msg_type: int, body: bytes, expect: int, timeout: float) -> bytes:
+        tran = self.next_tran()
+        packet = header(self.node, self.my_node, PROTO_PAKCTRL) + struct.pack(">BB", msg_type, tran) + body
+        reply = self.transact(packet, tran, timeout)
+        if reply.proto != PROTO_PAKCTRL or reply.msg_type != expect:
+            raise PakBusError(f"unexpected reply 0x{reply.msg_type:02x} to PakCtrl 0x{msg_type:02x}")
+        return reply.body
+
+    def string_settings(self, timeout: float = 10.0) -> dict:
+        """PakCtrl Get String Settings: the logger's self-description, e.g. Model and the PakCtrl and
+        BMP5 message codes it supports. DevConfig sends an empty name list ("all")."""
+        text = self._pakctrl(MSG_GET_STRING_SETTINGS, b"\0", MSG_GET_STRING_SETTINGS_RESP, timeout)
+        # The CR300 (OS 11.02) leaves out the ';' after an empty "Password=", so a name is found
+        # by the next "Name=", not only by ';'.
+        pairs = re.findall(r"([A-Za-z][A-Za-z0-9]*)=([^;=]*?)\s*(?=;|[A-Za-z][A-Za-z0-9]*=|$)", text.decode("latin-1"))
+        return {name: value.strip("\0 ") for name, value in pairs}
+
+    def get_settings(self, timeout: float = 20.0) -> dict:
+        """DevConfig Get Settings: every setting as {id: (read_only, raw value)}, plus the header.
+
+        Reply layout, from DevConfig reading the CR300 on 2026-11-02 (docs/pakbus.md, Settings):
+        outcome (byte, 1 = ok), device type (uint2), catalogue major version (byte), minor version
+        (byte), more-settings flag (byte), then per setting: id (uint2), flags and length (uint2:
+        bit 14 read-only, low 14 bits the value length), value. With the more-settings flag set,
+        DevConfig asked again with `0x8000 | last id received` after the security code, and the
+        CR300 answered with the settings after that id: none, with the flag cleared.
+        """
+        settings: dict = {}
+        request = struct.pack(">H", SECURITY_CODE)
+        while True:
+            body = self._pakctrl(MSG_DEVCONFIG_GET, request, MSG_DEVCONFIG_GET_RESP, timeout)
+            if not body or body[0] != 1:
+                raise PakBusError(f"get settings: outcome {body[:1].hex() or 'none'}")
+            device_type, major, minor, more = struct.unpack_from(">HBBB", body, 1)
+            at, last = 6, None
+            while at + 4 <= len(body):
+                sid, word = struct.unpack_from(">HH", body, at)
+                length = word & 0x3FFF
+                settings[sid] = (bool(word & 0x4000), body[at + 4 : at + 4 + length])
+                at += 4 + length
+                last = sid
+            if not more or last is None:
+                break
+            request = struct.pack(">HH", SECURITY_CODE, 0x8000 | last)
+        return {"device_type": device_type, "major": major, "minor": minor, "settings": settings}
+
+    def set_settings(self, values: dict, commit: bool = True, timeout: float = 20.0) -> dict:
+        """DevConfig Set Settings for {id: raw value}; returns {id: outcome} (1 = accepted).
+
+        With `commit`, the Control "commit" action follows, as DevConfig's Apply does: the logger
+        then saves the settings and **resets**, so its program restarts.
+        """
+        body = struct.pack(">H", SECURITY_CODE)
+        for sid, raw in values.items():
+            body += struct.pack(">HH", sid, len(raw)) + raw
+        reply = self._pakctrl(MSG_DEVCONFIG_SET, body, MSG_DEVCONFIG_SET_RESP, timeout)
+        if not reply or reply[0] != 1:
+            raise PakBusError(f"set settings: outcome {reply[:1].hex() or 'none'}")
+        outcomes = {
+            sid: code for sid, code in (struct.unpack_from(">HB", reply, at) for at in range(1, len(reply) - 2, 3))
+        }
+        if commit and all(code == 1 for code in outcomes.values()):
+            done = self._pakctrl(
+                MSG_DEVCONFIG_CONTROL,
+                struct.pack(">HB", SECURITY_CODE, DEVCONFIG_COMMIT),
+                MSG_DEVCONFIG_CONTROL_RESP,
+                timeout,
+            )
+            if not done or done[0] != 1:
+                raise PakBusError(f"settings commit: outcome {done[:1].hex() or 'none'}")
+        return outcomes
 
     def directory(self, timeout: float = 20.0) -> list:
         """The logger's drives and files, from `.DIR2` as LoggerNet's File Control reads it."""
