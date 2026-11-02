@@ -164,7 +164,10 @@ FILECTL_STOP_DELETE_DATA_CLEAR_POWERUP = 13  # "Stop Program", "Delete Data"; em
 # it with code 11, 0 with no program (CR6, 2026-11-02).
 COMPILE_STATES = {0: "no program", 1: "running", 3: "stopped"}
 
-DEFAULT_SWATH = 256  # file bytes per download packet; docs/lessons.md
+# File bytes per download packet. 976 is what DevConfig uses; on Windows the CR6, CR1000X and CR300
+# all took it (2026-11-02). A Mac lost 512-byte packets to the CR1000X, so elsewhere it stays 256;
+# docs/lessons.md. More than the logger's MaxPktSize (1000) was lost on the CR300.
+DEFAULT_SWATH = 976 if sys.platform == "win32" else 256
 
 # The logger reports time as signed seconds and nanoseconds since this epoch.
 EPOCH = datetime.datetime(1990, 1, 1, tzinfo=datetime.UTC)

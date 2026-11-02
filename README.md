@@ -215,7 +215,7 @@ Exit status is 0 only when the logger reports a clean compile; a compile error o
 printed and returns 1.
 
 A `.CR1X` program is compiled with `cr1000xcomp.exe` and sent the same way to the bench CR1000X.
-Files go in 256-byte packets; see [docs/lessons.md](docs/lessons.md#cr1000x-file-downloads-need-256-byte-packets).
+Files go in 976-byte packets on Windows and 256-byte packets elsewhere; see [docs/lessons.md](docs/lessons.md#file-download-packet-size-depends-on-the-host).
 
 ### Requirements
 
