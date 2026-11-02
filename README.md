@@ -10,7 +10,7 @@ pip install openloggernet        # or: uv tool install openloggernet
 ```
 
 The commands are installed as console scripts (`flash`, `read_values`, ...) and as modules
-(`python -m openloggernet.flash`). Python 3.15 or newer is required.
+(`python -m openloggernet.flash`). Python 3.14 or newer is required; development uses 3.15.
 
 ## `oln`: the logger from the command line
 
@@ -35,6 +35,15 @@ oln --model CR6 program run Main.CR6        # program status / run / stop / resu
 oln --model CR300 settings "station name"   # DevConfig settings; settings set NAME=VALUE
 oln --model CR6 terminal                    # the logger's terminal
 oln --model CR300 os CR300.11.03.obj        # send a new operating system
+```
+
+`oln-gui` is the same in a window, in the manner of LoggerNet's Connect screen: station and
+Status, clock, tables and collection, a live monitor with a plot, files and program control,
+settings, the terminal and OS updates. It needs the `gui` extra (PySide6):
+
+```bash
+uv tool install "openloggernet[gui]"
+oln-gui
 ```
 
 Only one program can hold a logger's port: disconnect LoggerNet (or close DevConfig) first.

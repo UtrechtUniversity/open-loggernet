@@ -743,7 +743,7 @@ class TextFilter:
                 out.extend(self._held)
                 self._held.clear()
                 self._in_frame = False
-        return out.take_bytes()
+        return bytes(out)
 
 
 # Largest reply frame, SYNC bytes included, that reaches the host intact, by USB product string.
@@ -1046,13 +1046,21 @@ class PakBusLink:
     # the whole session, opened by a message with no bytes. From LoggerNet's Terminal Emulator on
     # the CR6, 2026-11-02 (docs/pakbus.md, Terminal).
 
-    def terminal_open(self) -> int:
+    def terminal_open(self, attempts: int = 4) -> tuple[int, bytes]:
+        """Open a terminal session. Returns (transaction number, the logger's prompt).
+
+        The CR6 running a 10 Hz program never answered the first keystroke after the opening
+        message, whether it came 0.5 s or 4 s later, and answered every one after it
+        (2026-11-02). So carriage returns are sent until the logger answers.
+        """
         tran = self.next_tran()
         self.terminal_write(tran, b"")
-        # The CR6 ignored keystrokes sent 0.5 s after the opening message and answered those
-        # sent after 1 s (2026-11-02); LoggerNet's first came 3 s after it.
-        time.sleep(1.0)
-        return tran
+        for _ in range(attempts):
+            self.terminal_write(tran, b"\r")
+            prompt = self.terminal_read(tran, 1.0)
+            if prompt:
+                return tran, prompt
+        raise PakBusError("the logger's terminal did not answer")
 
     def terminal_write(self, tran: int, data: bytes) -> None:
         # Marked "expect more", as LoggerNet marks them: with the default the CR6 never answered.
