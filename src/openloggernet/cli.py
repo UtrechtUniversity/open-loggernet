@@ -470,7 +470,7 @@ def cmd_terminal(args) -> int:
     import threading
 
     with connect(args) as link:
-        tran = link.terminal_open()
+        tran, prompt = link.terminal_open()
         if args.send is not None:
             # One-shot: send the text and print what comes back, for scripts and the extension.
             link.terminal_write(tran, args.send.encode().decode("unicode_escape").encode("latin-1"))
@@ -490,7 +490,8 @@ def cmd_terminal(args) -> int:
 
         threading.Thread(target=read_keyboard, daemon=True).start()
         print("terminal open; type a line and Enter to send it, Ctrl-Z/Ctrl-D then Enter to leave", file=sys.stderr)
-        link.terminal_write(tran, b"\r")
+        sys.stdout.write(prompt.decode("latin-1").replace("\r\n", "\n").replace("\r", "\n"))
+        sys.stdout.flush()
         while True:
             text = link.terminal_read(tran, 0.1)
             if text:
