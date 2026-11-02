@@ -433,7 +433,11 @@ def decode_record(table: TableDef, buf: bytes) -> dict:
         kind, width = RECORD_TYPES[field.type_code]
         if kind == "ascii":
             raw = buf[at : at + field.piece]
-            out[field.name] = raw.split(b"\0", 1)[0].decode("ascii", "replace")
+            length = field.piece // field.count
+            strings = [
+                raw[i : i + length].split(b"\0", 1)[0].decode("ascii", "replace") for i in range(0, field.piece, length)
+            ]
+            out[field.name] = strings[0] if field.count == 1 else strings
             at += field.piece
             continue
         raw = buf[at : at + width * field.count]
@@ -642,7 +646,9 @@ class FieldDef:
         32 bytes, not the 40 that multiplying out the dimensions gives. Confirmed on 2026-09-17.
         """
         if self.type_code == 11:
-            return 1
+            # A string's last dimension is its length; any others make it an array of strings,
+            # e.g. the CR6's Status.PortConfig: piece 48, dimensions [4, 12], four 12-byte strings.
+            return self.piece // self.dimensions[-1] if len(self.dimensions) > 1 and self.dimensions[-1] else 1
         return self.piece
 
     @property

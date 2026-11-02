@@ -33,6 +33,19 @@ class RecordFormatTests(unittest.TestCase):
             ],
         )
 
+    def test_string_array_gets_a_column_per_string(self) -> None:
+        # The CR6's Status.PortConfig: piece 48, dimensions [4, 12], four 12-byte strings.
+        field = pakbus.FieldDef("PortConfig", 11, True, "Smp", "", "", 1, 48, [4, 12])
+        table = pakbus.TableDef(1, "Status", 1, 14, 0, [field], 0)
+        raw = b"".join(s.ljust(12, b"\0") for s in (b"Input", b"Output", b"SDI12", b""))
+        values = pakbus.decode_record(table, raw)
+        self.assertEqual(values["PortConfig"], ["Input", "Output", "SDI12", ""])
+        out = io.StringIO()
+        records.write_records(out, table, [(1, RECORDS[0][1], values)], "csv")
+        self.assertEqual(
+            out.getvalue().splitlines()[0], "TIMESTAMP,RECORD,PortConfig(1),PortConfig(2),PortConfig(3),PortConfig(4)"
+        )
+
     def test_jsonl_spells_out_array_elements(self) -> None:
         out = io.StringIO()
         records.write_records(out, table(), RECORDS, "jsonl")

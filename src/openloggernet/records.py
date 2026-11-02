@@ -22,7 +22,7 @@ def column_names(table: TableDef) -> list[str]:
     """Field names with array elements spelled out as LoggerNet does: `Temp(1)`, `Temp(2)`, ..."""
     names = []
     for field in table.fields:
-        if field.count > 1 and field.type_code != 11:
+        if field.count > 1:
             names.extend(f"{field.name}({i})" for i in range(1, field.count + 1))
         else:
             names.append(field.name)
@@ -32,7 +32,7 @@ def column_names(table: TableDef) -> list[str]:
 def _per_column(table: TableDef, attribute: str) -> list[str]:
     out = []
     for field in table.fields:
-        width = field.count if field.count > 1 and field.type_code != 11 else 1
+        width = field.count
         out.extend([getattr(field, attribute)] * width)
     return out
 
