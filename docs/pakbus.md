@@ -202,7 +202,7 @@ against all three bench loggers. DevConfig used PakBus address 4089 for itself.
   `oln`, and set back by `oln`.
 
 What a setting number means and how its value is laid out is not on the wire. DevConfig takes it
-from Campbell's device descriptions (`.dd`, `.ddi`) under `C:\Campbellsci\Lib\DevConfigLib\en2`,
+from Campbell's device descriptions (`.dd`, `.ddi`) under `C:\Campbellsci\Lib\DevConfigLib\en\v2`,
 chosen by device type and catalogue major version. `openloggernet.settings` reads them from there
 when installed; they are not part of this repository. Strings are NUL-terminated; enums are one
 byte; `serial-no` is a uint4. The CR300's GOES settings use per-component offsets and are left as
