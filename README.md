@@ -109,12 +109,12 @@ collect_data TString_Data --count 5         # all 48 sensors per record
 ```
 
 Table definitions come from the logger's own `.TDF`, so field names, types and array shapes are
-whatever the running program actually declared. A reply holds about 1 KB of records, so a long table is walked page
-by page, each page re-anchored on the logger's newest record because the table keeps growing during
-collection; a page that would leave a gap raises instead. Ten days of the 60 s `StationStatus` table
-takes a few minutes. Records whose size exceeds one packet -- `Status`,
-`Public`, `DataTableInfo` -- cannot be collected; read those with `read_values`. Details and the
-behaviours this depends on are in [docs/pakbus.md](docs/pakbus.md).
+whatever the running program actually declared. A table is collected the way LoggerNet does it,
+record ranges up to a fixed end so the table can keep growing without opening a gap, with two
+requests in flight: on Windows the CR300 gives about 1700 records/s and the CR1000X about
+1600 records/s of 240-byte records. Records larger than one packet, such as `Status` and `Public`,
+are read in fragments. Details and the behaviours this depends on are in
+[docs/pakbus.md](docs/pakbus.md).
 
 ---
 

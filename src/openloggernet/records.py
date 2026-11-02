@@ -54,6 +54,8 @@ def timestamp(when: datetime.datetime) -> str:
 
 
 def _toa5_value(value) -> str:
+    if isinstance(value, datetime.datetime):
+        return f'"{timestamp(value)}"'
     if isinstance(value, bool):
         return "-1" if value else "0"
     if isinstance(value, float):
@@ -102,7 +104,8 @@ def write_records(out: TextIO, table: TableDef, records: Iterable, fmt: str, env
         writer = csv.writer(out, lineterminator="\n")
         writer.writerow(["TIMESTAMP", "RECORD", *names])
         for number, when, values in records:
-            writer.writerow([timestamp(when), number, *flat_values(table, values)])
+            row = [timestamp(v) if isinstance(v, datetime.datetime) else v for v in flat_values(table, values)]
+            writer.writerow([timestamp(when), number, *row])
             count += 1
     else:
         for number, when, values in records:
@@ -114,6 +117,8 @@ def write_records(out: TextIO, table: TableDef, records: Iterable, fmt: str, env
 
 
 def _json_safe(value):
+    if isinstance(value, datetime.datetime):
+        return value.isoformat()
     if isinstance(value, float) and not math.isfinite(value):
         return str(value).upper()
     return value

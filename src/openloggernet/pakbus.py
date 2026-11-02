@@ -127,9 +127,9 @@ MSG_COLLECTDATA_RESP = 0x89
 # loggers with a reply limit, because 'most recent' fills a reply to the logger's own size.
 COLLECT_MOST_RECENT = 0x05
 COLLECT_RANGE = 0x06
-# Records each follow-up request re-asks for, so table growth between requests cannot
-# open a gap. Kept below the smallest page (TString_Data, about four records).
-COLLECT_OVERLAP = 2
+# Part of one record from a byte offset: P1 record number (uint4), P2 byte offset (uint4).
+# How LoggerNet reads Status and Public, whose records exceed a packet (capture, 2026-11-02).
+COLLECT_PARTIAL = 0x08
 
 # File Control command codes. Only the codes this tool uses are named; the full
 # set is listed in the CR6 help under Web Server/API Commands -> FileControl,
@@ -207,9 +207,8 @@ RECORD_FORMATS = {
 # Type 28 is a CRBasic `Boolean` stored with `Sample(...,Boolean)`, 4 bytes wide: decoded out of
 # Freezer_tester.CR6's Battery_Data and FinApp_Starts on 2026-09-22, where widths 1 and 2 broke
 # the record framing and 4 gave the Battery() and PanelTemp values beside it.
-# Type 14 is INFERRED, not decoded: it appears only in Status, Public and DataTableInfo, whose
-# records are larger than one packet and so cannot be collected here. It is a timestamp because
-# its instances are StartTime, LastSystemScan, LastSlowScan and LastPublish; its width is untested.
+# Type 14 is a timestamp, 8 bytes: the CR6's Status.StartTime, read whole with read_record on
+# 2026-11-02, matched the start time LoggerNet's Station Status showed.
 
 FP2_NAN = 0x9FFE
 FP2_POS_INF = 0x1FFF
@@ -455,7 +454,7 @@ def parse_collect_response(table: TableDef, body: bytes) -> tuple[int, list, boo
         _number, begin, nbr = struct.unpack_from(">HLH", body, at)
         at += 8
         if nbr & 0x8000:
-            raise PakBusError(f"{table.name}: partial-record block, which is not implemented")
+            raise PakBusError(f"{table.name}: part of a record; read it with PakBusLink.read_record")
         if first_begin is None:
             first_begin = begin
         stamp = EPOCH
@@ -475,12 +474,35 @@ def parse_collect_response(table: TableDef, body: bytes) -> tuple[int, list, boo
             if len(chunk) < table.record_size or at > end:
                 raise PakBusError(
                     f"{table.name}: record {begin + index} is {table.record_size} bytes and did "
-                    f"not fit the response. Records larger than one packet need Collect Data's "
-                    f"partial-record mode, which is not implemented; read these fields with "
-                    f"read_values.py instead."
+                    f"not fit the response; read records larger than a packet with "
+                    f"PakBusLink.read_record."
                 )
             records.append((begin + index, when, decode_record(table, chunk)))
     return (first_begin or 0), records, bool(body[end])
+
+
+def is_partial_response(body: bytes) -> bool:
+    """A Collect Data reply that carries part of one record: the top bit of the word where a
+    whole-record block has its record count. Seen from LoggerNet's capture, 2026-11-02."""
+    return len(body) >= 11 and body[0] == 0 and bool(body[7] & 0x80)
+
+
+def parse_partial_response(body: bytes) -> tuple[int, int, bytes]:
+    """Decode a partial-record reply into (record number, byte offset, fragment).
+
+    Layout, from LoggerNet reading the CR6 `Status` table (1520-byte records) on 2026-11-02:
+
+        response code (byte), table number (uint2), record number (uint4),
+        0x80000000 | byte offset into the record image (uint4), fragment, more flag (byte)
+
+    The record image is the record's 8-byte timestamp followed by its fields, so the first
+    fragment starts with the timestamp and the offsets count it: LoggerNet asked for offset 966
+    after a 966-byte first fragment, and 966 + 562 = 8 + 1520.
+    """
+    if body[0] != 0:
+        raise PakBusError(f"collect data response code {body[0]}")
+    _number, record, word = struct.unpack_from(">HLL", body, 1)
+    return record, word & 0x7FFFFFFF, body[11:-1]
 
 
 # --- decoded packets -------------------------------------------------------
@@ -1034,7 +1056,7 @@ class PakBusLink:
         """Records `begin` up to but not including `end`, as far as the logger holds them."""
         return self._collect_request(table, COLLECT_RANGE, struct.pack(">LL", begin, end), timeout)[1]
 
-    def _collect_request(self, table: TableDef, mode: int, params: bytes, timeout: float) -> tuple[int, list, bool]:
+    def _collect_raw(self, table: TableDef, mode: int, params: bytes, timeout: float) -> bytes:
         tran = self.next_tran()
         packet = header(self.node, self.my_node, PROTO_BMP5)
         packet += struct.pack(">BBH", MSG_COLLECTDATA, tran, SECURITY_CODE)
@@ -1044,67 +1066,142 @@ class PakBusLink:
         reply = self.transact(packet, tran, timeout)
         if reply.msg_type != MSG_COLLECTDATA_RESP:
             raise PakBusError(f"unexpected message type 0x{reply.msg_type:02x}")
-        return parse_collect_response(table, reply.body)
+        return reply.body
 
-    def collect_recent(self, table: TableDef, count: int, timeout: float = 25.0) -> list:
+    def _collect_request(self, table: TableDef, mode: int, params: bytes, timeout: float) -> tuple[int, list, bool]:
+        return parse_collect_response(table, self._collect_raw(table, mode, params, timeout))
+
+    def newest_record(self, table: TableDef, timeout: float = 10.0) -> int | None:
+        """The number of the newest record the table holds, or None when it holds none.
+
+        One 'most recent 1' request, as LoggerNet starts a collection; a record larger than a
+        packet answers with its first fragment, whose header carries the number all the same.
+        """
+        body = self._collect_raw(table, COLLECT_MOST_RECENT, struct.pack(">L", 1), timeout)
+        if is_partial_response(body):
+            return parse_partial_response(body)[0]
+        _, records, _ = parse_collect_response(table, body)
+        return records[-1][0] if records else None
+
+    def read_record(self, table: TableDef, number: int | None = None, timeout: float = 10.0) -> tuple | None:
+        """One whole record, the newest when `number` is None: (record number, time, values).
+
+        This is how LoggerNet's Table Monitor and Station Status read `Public` and `Status`. A
+        record larger than a packet comes back in fragments, the rest read with partial-record
+        requests from the byte offset reached (docs/pakbus.md, "Partial records").
+        """
+        if number is None:
+            body = self._collect_raw(table, COLLECT_MOST_RECENT, struct.pack(">L", 1), timeout)
+        else:
+            body = self._collect_raw(table, COLLECT_RANGE, struct.pack(">LL", number, number + 1), timeout)
+        if not is_partial_response(body):
+            _, records, _ = parse_collect_response(table, body)
+            return records[-1] if records else None
+        record, offset, image = parse_partial_response(body)
+        image = bytearray(image) if offset == 0 else bytearray()
+        if offset != 0:
+            raise PakBusError(f"{table.name}: first fragment of record {record} starts at byte {offset}")
+        size = 8 + table.record_size
+        while len(image) < size:
+            body = self._collect_raw(table, COLLECT_PARTIAL, struct.pack(">LL", record, len(image)), timeout)
+            got, at, fragment = parse_partial_response(body)
+            if got != record or at != len(image) or not fragment:
+                raise PakBusError(f"{table.name}: record {record} fragment at {at} ({len(fragment)} B) did not follow")
+            image.extend(fragment)
+        secs, nanos = struct.unpack_from(">LL", image)
+        when = EPOCH + datetime.timedelta(seconds=secs, microseconds=nanos / 1000)
+        return record, when, decode_record(table, bytes(image[8:size]))
+
+    def collect_range(
+        self, table: TableDef, begin: int, end: int, progress=None, timeout: float = 10.0, depth: int = 2
+    ) -> list:
+        """Records `begin` up to but not including `end`: [(record number, time, values)].
+
+        LoggerNet's method (capture of an "All the Data" collection from the CR300, 2026-11-02):
+        ask for the whole remaining range with mode 0x06, take the records the logger fits into
+        its reply, and ask again from the record after the last one received, keeping the same
+        end. The end is fixed, so table growth during a long collection cannot shift the window,
+        and a `begin` below the oldest record held is answered from the oldest record.
+        `progress(records so far, records asked for)` is called after every reply.
+
+        Beyond LoggerNet: once the first reply shows how many records fit a reply, the rest is
+        asked for in windows of that many, `depth` requests in flight at once. The CR1000X
+        answers them back to back, which took `FinApp_Poll` from 1026 to 1600 records/s; the
+        CR300 spends its ~70 ms per request inside the logger and gains nothing (2026-11-02). A
+        window answered short is asked again from where its reply stopped.
+        """
+        body = self._collect_raw(table, COLLECT_RANGE, struct.pack(">LL", begin, end), timeout)
+        if is_partial_response(body):
+            # Records larger than a reply: read them one at a time, starting from the record the
+            # logger answered with, which is the oldest it holds at or after `begin`.
+            first = parse_partial_response(body)[0]
+            whole = []
+            for number in range(first, end):
+                record = self.read_record(table, number, timeout)
+                if record is not None:
+                    whole.append(record)
+                if progress:
+                    progress(len(whole), end - begin)
+            return whole
+        _, page, _ = parse_collect_response(table, body)
+        page = [record for record in page if begin <= record[0] < end]
+        if not page:
+            return []
+        got = {record[0]: record for record in page}
+        per_reply = len(page)
+        windows = [(s, min(s + per_reply, end)) for s in range(page[-1][0] + 1, end, per_reply)]
+        if progress:
+            progress(len(got), end - begin)
+        inflight: dict[int, tuple[int, int]] = {}
+        deadline = time.monotonic() + timeout
+        while windows or inflight:
+            while windows and len(inflight) < max(1, depth):
+                lo, hi = windows.pop(0)
+                tran = self.next_tran()
+                packet = header(self.node, self.my_node, PROTO_BMP5)
+                packet += struct.pack(">BBH", MSG_COLLECTDATA, tran, SECURITY_CODE)
+                packet += struct.pack(">BHH", COLLECT_RANGE, table.number, table.signature)
+                packet += struct.pack(">LLH", lo, hi, 0)
+                self.send(packet)
+                inflight[tran] = (lo, hi)
+            reply = self.receive(max(0.0, deadline - time.monotonic()))
+            if reply is None:
+                raise PakBusTimeout(f"{table.name}: no reply to {len(inflight)} collect request(s) in flight")
+            if reply.tran_nbr not in inflight or reply.msg_type != MSG_COLLECTDATA_RESP:
+                continue
+            deadline = time.monotonic() + timeout
+            lo, hi = inflight.pop(reply.tran_nbr)
+            _, page, _ = parse_collect_response(table, reply.body)
+            page = [record for record in page if lo <= record[0] < hi]
+            got.update((record[0], record) for record in page)
+            # An empty reply means the logger no longer holds the window, overwritten while the
+            # collection ran; there is nothing to ask for again.
+            if page and page[-1][0] + 1 < hi:
+                windows.insert(0, (page[-1][0] + 1, hi))
+            if progress:
+                progress(len(got), end - begin)
+        return [got[number] for number in sorted(got)]
+
+    def collect_recent(self, table: TableDef, count: int, timeout: float = 25.0, progress=None) -> list:
         """Read up to the most recent `count` records. Returns [(record number, time, values)].
 
-        A logger with a reply limit is read by `_collect_recent_limited` instead.
-
-        Two logger behaviours shape this. Asking for more records than are stored returns
-        nothing at all rather than a short answer, so the largest satisfiable window is found
-        by halving. A window larger than one packet is answered in part, so the rest is walked
-        forward by anchoring a smaller window on the records already seen.
+        The newest record number is read first and the range up to it collected with
+        `collect_range`, as LoggerNet does. A logger with a reply limit is read by
+        `_collect_recent_limited` instead.
         """
         if self.max_reply_frame:
             return self._collect_recent_limited(table, count, self.max_reply_frame)
-
-        # Find the largest window the logger will answer. Halving alone undershoots -- asking
-        # for 14 when 6 exist would settle on 3 and silently drop half the records -- so the
-        # halving is followed by a binary search between the last refusal and the last answer.
-        want = max(1, min(count, table.size))
-        lo, hi = 0, want
-        best: tuple | None = None
-        while lo < hi:
-            mid = (lo + hi + 1) // 2
-            begin, records, more = self._collect_fragment(table, mid, timeout)
-            if records:
-                lo, best = mid, (mid, begin, records, more)
-            else:
-                hi = mid - 1
-        if best is None:
+        if table.size <= 1:
+            # Status, Public and DataTableInfo hold one record, made when it is asked for, and
+            # answer a range request with nothing at all (CR6, 2026-11-02); LoggerNet reads them
+            # with 'most recent 1' only.
+            record = self.read_record(table, timeout=timeout)
+            return [record] if record else []
+        newest = self.newest_record(table)
+        if newest is None:
             return []
-        want, begin, records, more = best
-
-        # A "most recent N" window is measured from the logger's newest record at the moment
-        # of each request, and the logger keeps writing while a long collection runs. Holding
-        # the first request's idea of "newest" fixed therefore shifts every later page forward
-        # and drops one record at a page boundary each time the table grows -- nine records
-        # were lost that way from a ten-day StationStatus collection on 2026-09-14. So the
-        # anchor is re-derived from every page, each request overlaps what is already held,
-        # and a page that still starts past the next expected record raises rather than
-        # leaving a silent gap.
-        newest = begin + want - 1
-        collected = list(records)
-        while more:
-            last = collected[-1][0]
-            asked = newest - last + COLLECT_OVERLAP
-            page_begin, page, more = self._collect_fragment(table, asked, timeout)
-            if not page:
-                break
-            newest = page_begin + asked - 1
-            fresh = [r for r in page if r[0] > last]
-            if not fresh:
-                if more:
-                    raise PakBusError(f"{table.name}: collection made no progress after record {last}")
-                break
-            if fresh[0][0] != last + 1:
-                raise PakBusError(
-                    f"{table.name}: records {last + 1}..{fresh[0][0] - 1} were skipped; the table "
-                    f"grew by more than {COLLECT_OVERLAP} records between two requests"
-                )
-            collected.extend(fresh)
-        return collected
+        want = max(1, min(count, table.size))
+        return self.collect_range(table, max(0, newest + 1 - want), newest + 1, progress)
 
     def _collect_recent_limited(self, table: TableDef, count: int, max_frame: int) -> list:
         """`collect_recent` for a logger whose replies must fit `max_reply_frame`.

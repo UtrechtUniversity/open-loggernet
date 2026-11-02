@@ -225,9 +225,16 @@ transaction.
 
 ### Collect Data
 
-On the CR6 only mode `0x05`, "the most recent P1 records", is used. Modes `0x03` and `0x04` were
-both answered with **response code 7**. Loggers with a reply limit are read with mode `0x06`
-instead; see [CR300 replies cut at 64 bytes](#cr300-replies-cut-at-64-bytes).
+Modes in use, as LoggerNet 4.10 uses them (USB captures of LoggerNet talking to the bench CR6,
+CR1000X and CR300, 2026-11-02):
+
+| Mode | Parameters | Use |
+|---|---|---|
+| `0x05` | P1 = N (uint4) | the most recent N records; LoggerNet asks for N = 1 to find the newest record, and for the Table Monitor |
+| `0x06` | P1 = first record, P2 = end record (uint4 each) | records P1 up to but not including P2 |
+| `0x08` | P1 = record (uint4), P2 = byte offset (uint4) | part of one record, from the byte offset |
+
+Modes `0x03` and `0x04` were both answered with **response code 7** by the CR6 on 2026-09-05.
 
 Response framing, confirmed against records whose values were already known from the serial trace:
 
@@ -247,22 +254,49 @@ own first record number and timestamp, where an interval table's record times ar
 and only the body's final byte is the more-records flag. Reading just the first block and taking
 the next byte as that flag stopped a ten-day `Shunt_Data` collection after 255 records.
 
-Behaviours `collect_recent` depends on:
+### Collecting a table: what LoggerNet does
 
-* **Asking for more records than are stored returns a bare response code**, not a short answer.
-  The largest answerable window is found by binary search; halving alone undershoots and silently
-  returns fewer records than exist.
-* **A reply holds about 1 KB of records** (245 `StationStatus` records, 61 `Shunt_Data` records),
-  with the more-records flag set; the rest is walked forward page by page.
-* **A "most recent N" window is measured from the logger's newest record at each request**, and the
-  table keeps growing while a long collection runs. The window anchor must be re-derived from every
-  page. Holding the first request's anchor fixed skipped one record at a page boundary each time
-  the table grew: nine records from a ten-day `StationStatus` collection, all of which were then
-  found present on the logger. Each follow-up request overlaps two records and raises if a page
-  still starts past the next expected record.
-* **A record larger than one packet cannot be collected.** `Status` (1582 B), `Public` (1980 B) and
-  `DataTableInfo` (1320 B) all exceed it. That needs the partial-record mode, which is not
-  implemented; use Get Values for those.
+An "All the Data" Custom Collection of the CR300's `Table1` (128 958 records of 6 bytes) was:
+
+1. mode `0x05`, N = 1, for the newest record number;
+2. mode `0x06` over `[newest + 1 - table size, newest + 1)`, the start wrapped below zero as a
+   uint4; the logger answered from its oldest record, record 0;
+3. mode `0x06` again from the record after the last one received, **with the same end**, until the
+   end is reached. Each reply held as many records as fit, 816 bytes here, about 70 ms apart.
+
+That took 76 s, 1697 records/s. `PakBusLink.collect_range` does the same, so a long collection
+cannot open a gap as the table grows: the end is fixed, and every request starts after the last
+record received. It got 1722 records/s from the same table. It then asks for the rest in windows
+of one reply's worth, with two requests in flight. The CR1000X answers them back to back:
+`FinApp_Poll` (240-byte records, three per reply) went from 1026 to 1600 records/s. The CR300
+spends its time per request inside the logger, and gains nothing.
+
+The previous method, paging "most recent N" windows and finding the largest answerable N by
+binary search, managed 356 records/s on `FinApp_Poll` and stopped with "no progress" after
+record 104 of the CR300's `Table1`. It is gone.
+
+A range that starts below the oldest record held has only been tried while record 0 was still
+held; on a table whose ring has wrapped, that behaviour is untested.
+
+### Partial records
+
+A record too large for one reply, such as `Status` or `Public`, comes back in fragments. LoggerNet
+reads them when it connects and for Station Status, so the layout below is what it received from
+the CR6's 1520-byte `Status`:
+
+```
+response code (byte), table number (uint2), record number (uint4),
+0x80000000 | byte offset (uint4)     -- where a whole-record block has its record count
+fragment
+more-records flag (byte)
+```
+
+The offset counts into the record *image*: the 8-byte timestamp, then the fields. The first
+fragment came from mode `0x05`, N = 1, at offset 0 with 958 field bytes after the timestamp.
+LoggerNet then asked mode `0x08` for offset 966, and got the last 562 bytes: 966 + 562 = 8 + 1520.
+`PakBusLink.read_record` does this. Read back on 2026-11-02, `Status` from the CR6 (1520 B),
+CR1000X (1572 B) and CR300 (956 B) decoded field for field. The CR6's `WatchdogErrors` = 2 and
+`LithiumBattery` = 3.67 matched LoggerNet's Station Status, and so did `StartTime`.
 
 ### Stored-record field types
 
@@ -275,16 +309,13 @@ Sizes and decoders are in `RECORD_TYPES` in `src/openloggernet/pakbus.py`.
 | 7 | FP2 | `DailyPower.BattMinQuiet` decoded to 12.57 against a trace of `prevDayV=12.570` |
 | 9 | IEEE4 | `Shunt_Data.CurrentMean` decoded to 0.196 A against heartbeats of 0.195 A |
 | 11 | ASCII | `Status.OSVersion`, length from the field's piece count |
-| 14 | timestamp | **Inferred.** Only on `StartTime`, `LastSystemScan`, `LastSlowScan`, `LastPublish` |
+| 14 | timestamp, 8 bytes: seconds and nanoseconds since 1990 | CR6 `Status.StartTime` read as 2026-02-27 13:08:28.516, which LoggerNet's Station Status showed as 13:08:28, 2026-11-02 |
 | 28 | Boolean, 4 bytes | `Freezer_tester.CR6` `FinApp_Starts` and `Battery_Data`, 2026-09-22: widths 1 and 2 broke the record framing, 4 decoded `True` beside the matching `Battery()` and `PanelTemp` values |
 
 **A field stores `piece` values, not the product of its `dimensions`.** The dimensions describe the
 source array; a field that samples one element of it keeps the array's dimensions with `piece = 1`.
 `SbdFinAppDaily.FinApp_Neutrons_Avg` and `FinApp_Muons_Avg` are `dimensions = [2]`, `piece = 1`, and
 the table's records are 32 bytes, confirmed against raw replies on 2026-09-17.
-
-Type 14 appears only in tables whose records exceed one packet, so neither its width nor its
-decoding has been confirmed by reading a known value back.
 
 Campbell FP2 is a sign bit, a 2-bit negative decimal exponent and a 13-bit mantissa, with `0x9FFE`
 for NaN and `0x1FFF`/`0x9FFF` for the infinities.
