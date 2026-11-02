@@ -126,7 +126,7 @@ read correctly. An array element can be named directly, e.g. `Acclima_VWC(2)`.
 
 A file larger than one packet is sent as a series of file-download commands that share one
 transaction number, each with its byte offset, the last one with the close flag set. The flasher
-sends 256 bytes per packet; a CR1000X ignored 512 (`docs/lessons.md`).
+sends 976 bytes per packet on Windows and 256 elsewhere; a CR1000X ignored 512 from a Mac (`docs/lessons.md`).
 
 ### File control command codes
 
