@@ -21,7 +21,9 @@ Wire-format notes and sources: docs/pakbus.md
 """
 
 import datetime
+import re
 import struct
+import sys
 import time
 from dataclasses import dataclass
 
@@ -29,27 +31,60 @@ import serial
 from serial.tools import list_ports
 
 
-def find_port() -> str | None:
-    """Locate a Campbell logger's USB serial port by its USB manufacturer string, on Linux or macOS.
+@dataclass
+class LoggerPort:
+    """A serial port with a Campbell logger behind it. `model` comes from the USB descriptors."""
+
+    device: str
+    model: str | None
+    description: str
+
+
+def _model_of(info) -> str | None:
+    """The model a port reports: its USB product string on Linux and macOS, or, on Windows, where
+    the product string is empty, the `CR300 (COM4)` description built from it."""
+    product = (info.product or "").strip()
+    if not product and sys.platform == "win32":
+        product = re.sub(r"\s*\(COM\d+\)$", "", info.description or "").strip()
+    return product.upper() or None
+
+
+def list_loggers() -> list[LoggerPort]:
+    """Every attached Campbell logger port, by USB manufacturer string, sorted by device name.
 
     Looked up afresh on every call: the logger re-enumerates when it compiles a newly sent
     program and can come back on a different node (docs/pakbus.md).
     """
-    ports = sorted(list_ports.comports(), key=lambda port: port.device)
-    for port in ports:
-        if "campbell" in (port.manufacturer or "").lower():
-            return port.device
-    for port in ports:
+    return [
+        LoggerPort(info.device, _model_of(info), info.description or "")
+        for info in sorted(list_ports.comports(), key=lambda port: port.device)
+        if "campbell" in (info.manufacturer or "").lower()
+    ]
+
+
+def find_port(model: str | None = None) -> str | None:
+    """Locate a Campbell logger's USB serial port, optionally of one model such as "CR300".
+
+    Without a model the first logger is taken, and failing that a port that only looks like a
+    CDC-ACM modem.
+    """
+    loggers = list_loggers()
+    if model:
+        wanted = model.strip().upper()
+        return next((p.device for p in loggers if p.model == wanted), None)
+    if loggers:
+        return loggers[0].device
+    for port in sorted(list_ports.comports(), key=lambda port: port.device):
         if "ttyACM" in port.device or "usbmodem" in port.device:
             return port.device
     return None
 
 
-def require_port() -> str:
+def require_port(model: str | None = None) -> str:
     """`find_port`, raising when no logger is attached."""
-    port = find_port()
+    port = find_port(model)
     if port is None:
-        raise PakBusError("no Campbell logger serial port found")
+        raise PakBusError(f"no {model or 'Campbell logger'} serial port found")
     return port
 
 
@@ -578,11 +613,11 @@ class TextFilter:
 
 
 # Largest reply frame, SYNC bytes included, that reaches the host intact, by USB product string.
-# Only the first 64-byte USB packet of a CR300 reply reached this client; the CR350 entry is
-# assumed. LoggerNet is much faster on the same logger, so this is a workaround pending research:
-# docs/pakbus.md, "CR300 replies cut at 64 bytes". Models not listed
-# (CR6, CR1000X) need none; the CR6 answers with replies of about 1 KB.
-MAX_REPLY_FRAME = {"CR300": 64, "CR350": 64}
+# Only the first 64-byte USB packet of a CR300 reply reached this client on Linux; the CR350
+# entry is assumed. On Windows the same CR300 sends whole replies, so the cut belongs to the
+# Linux host path and no limit is applied there: docs/pakbus.md, "CR300 replies cut at 64 bytes".
+# Models not listed (CR6, CR1000X) need none; the CR6 answers with replies of about 1 KB.
+MAX_REPLY_FRAME = {"CR300": 64, "CR350": 64} if sys.platform != "win32" else {}
 
 # Frame bytes outside a reply's message body: two SYNCs, the header, the message type and
 # transaction number, and the signature nullifier.
@@ -598,10 +633,10 @@ class PakBusTimeout(PakBusError):
 
 
 def port_model(port: str) -> str | None:
-    """The logger model a USB serial port reports as its product string, e.g. "CR300"."""
+    """The logger model a USB serial port reports, e.g. "CR300"."""
     for info in list_ports.comports():
         if info.device == port:
-            return (info.product or "").strip().upper() or None
+            return _model_of(info)
     return None
 
 
