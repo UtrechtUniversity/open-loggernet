@@ -52,18 +52,20 @@ def included_files(program: Path) -> list[str]:
     return found
 
 
-def reconnect(link: PakBusLink, port_override: str | None, timeout: float = 90) -> str | None:
+def reconnect(link: PakBusLink, port_override: str | None, timeout: float = 90, model: str | None = None) -> str | None:
     """Wait for the logger's USB port to come back and reopen it.
 
     The CR6 disconnects and re-enumerates its USB device while it compiles a
     newly sent program, and the device node it comes back on can differ from
-    the one it left (ttyACM1 -> ttyACM0), so the port is looked up again.
+    the one it left (ttyACM1 -> ttyACM0), so the port is looked up again. A
+    Windows `COMn` name is not a filesystem path, so only failing to open it
+    means it is not back yet.
     """
     link.close()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        path = port_override or find_port()
-        if path and os.path.exists(path):
+        path = port_override or find_port(model or link.model)
+        if path and (sys.platform == "win32" or os.path.exists(path)):
             try:
                 link.open(path)
             except serial.SerialException:

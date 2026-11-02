@@ -19,6 +19,7 @@ classifiers = [
 Repository = "https://github.com/UtrechtUniversity/open-loggernet"
 
 [project.scripts]
+oln = "openloggernet.cli:main"
 flash = "openloggernet.flash:main"
 read_values = "openloggernet.read_values:main"
 set_value = "openloggernet.set_value:main"
