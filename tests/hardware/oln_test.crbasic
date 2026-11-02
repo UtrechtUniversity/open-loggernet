@@ -1,0 +1,52 @@
+'oln_test: known values in every storable output type, and a small table that wraps.
+Public FIeee4, FFp2, FIeee8
+Public LLong As Long, LUint2 As Long, LUint4 As Long
+Public BBool As Boolean
+Public BBool8(2) As Boolean
+Public UUint1(2) As UINT1
+Public SStr As String * 16
+Public Arr(3)
+Public Cnt As Long
+
+DataTable (Types,True,100)
+  DataInterval (0,1,Sec,10)
+  Sample (1,FIeee4,IEEE4)
+  Sample (1,FFp2,FP2)
+  Sample (1,FIeee8,IEEE8)
+  Sample (1,LLong,Long)
+  Sample (1,LUint2,UINT2)
+  Sample (1,LUint4,UINT4)
+  Sample (1,BBool,Boolean)
+  Sample (2,BBool8(),Bool8)
+  Sample (2,UUint1(),UINT1)
+  Sample (1,SStr,String)
+  Sample (3,Arr(),IEEE4)
+EndTable
+
+DataTable (Ring,True,50)
+  DataInterval (0,100,mSec,10)
+  Sample (1,Cnt,Long)
+EndTable
+
+BeginProg
+  FIeee4 = 12.5
+  FFp2 = -3.25
+  FIeee8 = 0.1
+  LLong = -123456
+  LUint2 = 54321
+  LUint4 = 3000000000
+  BBool = True
+  BBool8(1) = True
+  BBool8(2) = False
+  UUint1(1) = 7
+  UUint1(2) = 250
+  SStr = "hello"
+  Arr(1) = 1.5
+  Arr(2) = -2.25
+  Arr(3) = 1000.125
+  Scan (100,mSec,0,0)
+    Cnt = Cnt + 1
+    CallTable Types
+    CallTable Ring
+  NextScan
+EndProg
