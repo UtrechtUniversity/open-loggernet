@@ -12,6 +12,37 @@ pip install openloggernet        # or: uv tool install openloggernet
 The commands are installed as console scripts (`flash`, `read_values`, ...) and as modules
 (`python -m openloggernet.flash`). Python 3.15 or newer is required.
 
+## `oln`: the logger from the command line
+
+`oln` covers what LoggerNet's Connect screen and Device Configuration Utility are used for on a
+logger attached by USB. Choose the logger with `--model` or `--port` when more than one is
+attached; `--json` gives machine-readable output (JSON Lines for `watch`), which is what the VS
+Code extension uses.
+
+```bash
+oln ports                                   # attached loggers and their models
+oln --model CR300 info                      # OS, serial, program, compile result
+oln --model CR300 status                    # the Status table, as Station Status shows it
+oln --model CR6 clock --set-utc
+oln --model CR300 tables
+oln --model CR300 collect Table1 --all --format toa5 -o Table1.dat
+oln --model CR6 watch Public PTemp          # live values, like the Table Monitor
+oln --model CR6 get Public.PTemp            # read / write single values
+oln --model CR6 set Public.DoRead=true
+oln --model CR6 files ls                    # drives, files, run flags
+oln --model CR6 files put Main.CR6          # files get / put / rm
+oln --model CR6 program run Main.CR6        # program status / run / stop / resume / power-up
+oln --model CR300 settings "station name"   # DevConfig settings; settings set NAME=VALUE
+oln --model CR6 terminal                    # the logger's terminal
+oln --model CR300 os CR300.11.03.obj        # send a new operating system
+```
+
+Only one program can hold a logger's port: disconnect LoggerNet (or close DevConfig) first.
+Setting names come from Device Configuration Utility's device descriptions when it is installed
+(`C:\Campbellsci\Lib\DevConfigLib`, or `$OLN_DEVCONFIG_LIB`); without them settings are shown by
+number. How each command maps onto PakBus, and what LoggerNet does for the same action, is in
+[docs/pakbus.md](docs/pakbus.md).
+
 ## Development
 
 ```bash

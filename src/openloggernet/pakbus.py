@@ -121,6 +121,8 @@ MSG_FILEUPLOAD = 0x1D
 MSG_FILEUPLOAD_RESP = 0x9D
 MSG_COLLECTDATA = 0x09
 MSG_COLLECTDATA_RESP = 0x89
+MSG_TERMINAL = 0x0B
+MSG_TERMINAL_RESP = 0x8B
 # PakCtrl messages Device Configuration Utility uses (USB capture against the CR300, 2026-11-02).
 MSG_GET_STRING_SETTINGS = 0x07  # -> 0x87 "Name=value;Name=value;"
 MSG_GET_STRING_SETTINGS_RESP = 0x87
@@ -1030,6 +1032,40 @@ class PakBusLink:
             if not done or done[0] != 1:
                 raise PakBusError(f"settings commit: outcome {done[:1].hex() or 'none'}")
         return outcomes
+
+    # -- terminal --
+    # BMP5 0x0B carries keystrokes to the logger's terminal and 0x8B its text back: security code,
+    # then the bytes typed; the reply is a response byte, then text. One transaction number serves
+    # the whole session, opened by a message with no bytes. From LoggerNet's Terminal Emulator on
+    # the CR6, 2026-11-02 (docs/pakbus.md, Terminal).
+
+    def terminal_open(self) -> int:
+        tran = self.next_tran()
+        self.terminal_write(tran, b"")
+        # The CR6 ignored keystrokes sent 0.5 s after the opening message and answered those
+        # sent after 1 s (2026-11-02); LoggerNet's first came 3 s after it.
+        time.sleep(1.0)
+        return tran
+
+    def terminal_write(self, tran: int, data: bytes) -> None:
+        # Marked "expect more", as LoggerNet marks them: with the default the CR6 never answered.
+        packet = header(self.node, self.my_node, PROTO_BMP5, expect_more=0x1, priority=0x2)
+        self.send(packet + struct.pack(">BBH", MSG_TERMINAL, tran, SECURITY_CODE) + data)
+
+    def terminal_read(self, tran: int, timeout: float = 0.2) -> bytes:
+        """Terminal text that arrives within `timeout`, b"" when none."""
+        out = bytearray()
+        deadline = time.monotonic() + timeout
+        while (remaining := deadline - time.monotonic()) > 0:
+            reply = self.receive(remaining)
+            if reply is None:
+                break
+            if reply.proto == PROTO_PAKCTRL and reply.msg_type == MSG_HELLO:
+                self._answer_hello(reply)
+            elif reply.msg_type == MSG_TERMINAL_RESP and reply.tran_nbr == tran:
+                out.extend(reply.body[1:])
+                deadline = time.monotonic() + min(timeout, 0.05)  # gather what follows closely
+        return bytes(out)
 
     def directory(self, timeout: float = 20.0) -> list:
         """The logger's drives and files, from `.DIR2` as LoggerNet's File Control reads it."""
