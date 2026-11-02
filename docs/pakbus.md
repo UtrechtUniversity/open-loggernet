@@ -139,7 +139,7 @@ CRBasic help's descriptions are wrong for 7 and 10.
 |---|---|---|---|
 | 1 | program | Run Options: Run Now + Run On Power-up | compiles and runs it, marks it run-on-power-up; 6 s hold-off, USB re-enumerates |
 | 2 | program | -- | marks it run-on-power-up, nothing else; no hold-off |
-| 4 | file | Delete | deletes the file |
+| 4 | file | Delete | deletes the file; the loaded program, even one that failed to compile, was refused with **response code 22** |
 | 6 | program | -- | compiles and runs it; the power-up program is left as it was |
 | 7 | program | -- | stops and **unloads** the program: no program, no power-up program |
 | 10 | program | -- | compiles and runs it, and **clears** the power-up program |
@@ -152,7 +152,9 @@ port name but took a new USB address.
 
 ### Get Prog Stats compile state
 
-1 while running, 3 after code 11 paused the program, 0 with no program (CR6, 2026-11-02). The CR6,
+1 while running, 2 when the program did not compile, 3 after code 11 paused the program, 0 with
+no program (CR6, 2026-11-02). With state 2 the compile result carries the logger's message, e.g.
+`line 15: Reps 1 illegal; with BOOL8 and UINT1 data types, reps must be evenly divisible by 2`. The CR6,
 CR1000X and CR300 also append the **model** and the **station name** (both asciiz) after the
 compile result: `CR6`/`27946`, `CR1000X`/`59624`, `CR300`/`1`.
 
@@ -392,8 +394,15 @@ The previous method, paging "most recent N" windows and finding the largest answ
 binary search, managed 356 records/s on `FinApp_Poll` and stopped with "no progress" after
 record 104 of the CR300's `Table1`. It is gone.
 
-A range that starts below the oldest record held has only been tried while record 0 was still
-held; on a table whose ring has wrapped, that behaviour is untested.
+**A wrapped table is answered from its oldest record.** `tests/hardware/oln_test.crbasic` writes a
+50-record `Ring` table at 10 Hz. Once it had wrapped, a range from record 0 was answered from the
+oldest record held, on the CR6, CR1000X and CR300 (2026-11-02, `tests/test_hardware.py`).
+
+**The declared size is a minimum, not what is held.** The CR300 (OS 11.03) kept about 30 800
+records of that 50-record table, numbered contiguously with the program's counter stepping by
+one throughout, while both the `.TDF` and `DataTableInfo.DataRecordSize` said 50; the CR6 held
+exactly 50. So collection is not capped at the declared size: `oln collect --all` asks for the
+range from record 0 and took all 30 504 records the CR300 then held (2 484 records/s).
 
 **Sub-second tables.** The interval in the `.TDF` is seconds and nanoseconds, and the nanoseconds
 matter: `oln_fast.CR6`, a 10 Hz table of 10-byte records on the CR6, declares 0 s + 100 000 000 ns.
@@ -427,11 +436,15 @@ Sizes and decoders are in `RECORD_TYPES` in `src/openloggernet/pakbus.py`.
 
 | Code | Type | How it was established |
 |---|---|---|
-| 2 | UInt2 | `TString_Data.TString_ErrorCount`, decoded and matched to the trace |
+| 1 | UInt1 | `oln_test.crbasic`: `Sample(2,UUint1(),UINT1)` read back 7 and 250 on all three bench loggers, 2026-11-02 |
+| 2 | UInt2 | `TString_Data.TString_ErrorCount`, decoded and matched to the trace; 54321 from `oln_test` |
+| 3 | UInt4 | `oln_test` (`UINT4` from an `As Long` variable), 2026-11-02 |
 | 6 | Int4 | `DailyPower.Profile`, read back as 2 = Dire while the trace said Dire |
 | 7 | FP2 | `DailyPower.BattMinQuiet` decoded to 12.57 against a trace of `prevDayV=12.570` |
 | 9 | IEEE4 | `Shunt_Data.CurrentMean` decoded to 0.196 A against heartbeats of 0.195 A |
-| 11 | ASCII | `Status.OSVersion`, length from the field's piece count |
+| 11 | ASCII | `Status.OSVersion`, length from the field's piece count; `"hello"` from `oln_test` |
+| 17 | Bool8, one byte per value | `oln_test`: `Sample(2,BBool8(),Bool8)` read back True, False; Bool8 and UINT1 need an even repetition count |
+| 18 | IEEE8 | `oln_test`: 0.1 from a single-precision variable read back as 0.10000000149 |
 | 14 | timestamp, 8 bytes: seconds and nanoseconds since 1990 | CR6 `Status.StartTime` read as 2026-02-27 13:08:28.516, which LoggerNet's Station Status showed as 13:08:28, 2026-11-02 |
 | 28 | Boolean, 4 bytes | `Freezer_tester.CR6` `FinApp_Starts` and `Battery_Data`, 2026-09-22: widths 1 and 2 broke the record framing, 4 decoded `True` beside the matching `Battery()` and `PanelTemp` values |
 
