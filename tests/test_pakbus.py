@@ -99,35 +99,58 @@ class CollectDataTests(unittest.TestCase):
             pakbus.parse_collect_response(self.table(60), b"\x07")
 
 
-class GrowingTable(pakbus.PakBusLink):
-    """Stands in for a logger whose table keeps growing while it is being collected."""
+class RangeLogger(pakbus.PakBusLink):
+    """Answers Collect Data range requests (mode 6) as the CR300 did on 2026-11-02: from the oldest
+    record held when the range starts below it, at most `page` records per reply, and replies in
+    the order the requests arrived. The table grows by one record every `grow_every` requests."""
 
     max_reply_frame = None
 
-    def __init__(self, stored: int, page: int, grow_every: int) -> None:
-        self.stored, self.page, self.grow_every, self.requests = stored, page, grow_every, 0
+    def __init__(self, oldest: int, newest: int, page: int, grow_every: int) -> None:
+        self.oldest, self.newest, self.page, self.grow_every = oldest, newest, page, grow_every
+        self.requests, self.replies, self._tran, self.node, self.my_node = 0, [], 0, 1, 4094
+        self.table = pakbus.TableDef(2, "T", 100000, 14, 60, [pakbus.FieldDef("V", 9, True, "", "", "", 1, 1, [])], 0)
 
-    def _collect_fragment(self, table, count, timeout=25.0):
+    def reply_body(self, begin: int, end: int) -> bytes:
         self.requests += 1
-        stored = self.stored
         if self.requests % self.grow_every == 0:
-            self.stored += 1
-        if count > stored:
-            return 0, [], False
-        begin = stored - count
-        span = min(self.page, count)
-        records = [(n, None, {"Value": float(n)}) for n in range(begin, begin + span)]
-        return begin, records, begin + span < stored
+            self.newest += 1
+        numbers = list(range(max(begin, self.oldest), min(end, self.newest + 1)))[: self.page]
+        if not numbers:
+            return b"\x00\x00"
+        body = b"\x00" + struct.pack(">HLH", 2, numbers[0], len(numbers)) + struct.pack(">LL", 0, 0)
+        return body + b"".join(struct.pack(">f", n) for n in numbers) + b"\x00"
+
+    def _collect_raw(self, table, mode, params, timeout):
+        if mode == pakbus.COLLECT_MOST_RECENT:
+            return self.reply_body(self.newest, self.newest + 1)
+        return self.reply_body(*struct.unpack(">LL", params))
+
+    def send(self, packet: bytes) -> None:
+        lo, hi = struct.unpack_from(">LL", packet, 17)
+        self.replies.append(pakbus.Packet(4094, 1, 1, 0x89, packet[9], self.reply_body(lo, hi), b""))
+
+    def receive(self, timeout: float = 5.0):
+        return self.replies.pop(0) if self.replies else None
 
 
-class CollectRecentTests(unittest.TestCase):
-    def test_growth_during_collection_leaves_no_gap(self) -> None:
-        table = pakbus.TableDef(2, "T", 100000, 14, 60, [], 0)
-        link = GrowingTable(stored=500, page=7, grow_every=3)
-        records = link.collect_recent(table, 100000)
-        numbers = [r[0] for r in records]
-        self.assertEqual(numbers, list(range(numbers[0], numbers[-1] + 1)))
-        self.assertGreaterEqual(numbers[-1], 499)
+class CollectRangeTests(unittest.TestCase):
+    def test_pipelined_collection_of_a_growing_table_has_no_gap(self) -> None:
+        for depth in (1, 2, 4):
+            link = RangeLogger(oldest=0, newest=999, page=7, grow_every=3)
+            numbers = [r[0] for r in link.collect_range(link.table, 0, 1000, timeout=1, depth=depth)]
+            self.assertEqual(numbers, list(range(0, 1000)), depth)
+
+    def test_range_below_the_oldest_record_starts_at_the_oldest(self) -> None:
+        link = RangeLogger(oldest=40, newest=99, page=9, grow_every=10**9)
+        numbers = [r[0] for r in link.collect_recent(link.table, 100000)]
+        self.assertEqual(numbers, list(range(40, 100)))
+
+    def test_partial_reply_header(self) -> None:
+        # Second fragment of CR6 Status record 1, as LoggerNet received it on 2026-11-02.
+        body = bytes.fromhex("00 0001 00000001 800003c6") + b"\x0a" * 3 + b"\x00"
+        self.assertTrue(pakbus.is_partial_response(body))
+        self.assertEqual(pakbus.parse_partial_response(body), (1, 966, b"\x0a" * 3))
 
 
 class LimitedLogger(pakbus.PakBusLink):
