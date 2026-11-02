@@ -124,17 +124,56 @@ sends 256 bytes per packet; a CR1000X ignored 512 (`docs/lessons.md`).
 
 ### File control command codes
 
-Only code 1 is used by the flasher and therefore the only one confirmed here. The full set is in
-the CRBasic help topic `Info/webserverapicommands1.htm` (shipped with Campbell's CRBasic Editor, not redistributed here) → FileControl.
+Codes 1, 4, 11, 12 and 13 are what LoggerNet 4.10's File Control sent for the actions named,
+captured against the CR6 (serial 27946, OS 6.14.4.0) on 2026-11-02. Codes 2, 6, 7 and 10 were then
+sent to the same CR6 by `oln`, and their effect read back from Get Prog Stats and `.DIR2`. The
+CRBasic help's descriptions are wrong for 7 and 10.
 
-| Code | Meaning |
-|---|---|
-| 1 | compile and run, and mark as run-on-power-up |
-| 2 | mark as run-on-power-up |
-| 4 | delete the file |
-| 6 | compile and run without deleting data tables |
-| 7 | stop the running program |
-| 10 | compile and run, leaving the power-up program alone |
+| Code | File name | LoggerNet action | Observed effect |
+|---|---|---|---|
+| 1 | program | Run Options: Run Now + Run On Power-up | compiles and runs it, marks it run-on-power-up; 6 s hold-off, USB re-enumerates |
+| 2 | program | -- | marks it run-on-power-up, nothing else; no hold-off |
+| 4 | file | Delete | deletes the file |
+| 6 | program | -- | compiles and runs it; the power-up program is left as it was |
+| 7 | program | -- | stops and **unloads** the program: no program, no power-up program |
+| 10 | program | -- | compiles and runs it, and **clears** the power-up program |
+| 11 | *empty* | Stop Program, Retain Data | pauses: compile state 3, attribute 5; no hold-off, no re-enumeration |
+| 12 | program | Run Options: Restart Program, Do not erase data files | resumes a paused program; 6 s hold-off |
+| 13 | *empty* | Stop Program, Delete Data, Clear Run On Power-up | stops it, deletes its data, clears the power-up program |
+
+Every code with a hold-off made the CR6 re-enumerate its USB device, which on Windows kept its COM
+port name but took a new USB address.
+
+### Get Prog Stats compile state
+
+1 while running, 3 after code 11 paused the program, 0 with no program (CR6, 2026-11-02). The CR6,
+CR1000X and CR300 also append the **model** and the **station name** (both asciiz) after the
+compile result: `CR6`/`27946`, `CR1000X`/`59624`, `CR300`/`1`.
+
+### Directory: `.DIR` and `.DIR2`
+
+Pseudo-files read with File Upload; LoggerNet's File Control reads `.DIR2`. Worked out on all three
+bench loggers on 2026-11-02 against the File Control window:
+
+```
+version (byte: 1 for .DIR, 2 for .DIR2), then per entry:
+    name (asciiz), size (uint4), modified (asciiz, "YYYY-MM-DD hh:mm:ss"),
+    attributes (bytes, terminated by 0)
+```
+
+A drive entry has a name ending in `:` and an empty date, and its size field is the drive's free
+space: a uint4 in `.DIR`, an **IEEE4 float** in `.DIR2`. CR6: `.DIR2` `4b ef a0 00` = 31 408 128,
+which `.DIR` gave as an integer and LoggerNet showed as 31.41 MB; CR300: 83 791 872, equal to
+`Status.CPUDriveFree`. Attributes seen: 1 = the loaded program, 2 = run on power-up, 5 = paused.
+LoggerNet showed `[1, 2]` as "running, power up" and `[1, 5, 2]` as "stopped, power up".
+
+### Summary: `.TDFS`
+
+The first thing LoggerNet reads on connecting. It is the Get Prog Stats fields (from OS version to
+compile result) after a version byte (0x11), then the model (asciiz), then for each table its name
+(asciiz), size in records (uint4) and table signature (uint2), the same signature Collect Data
+uses. LoggerNet then reads one table's definition with File Upload of `<table>.TDF`, e.g.
+`Public.TDF`, rather than the whole `.TDF`.
 
 ## CR6 behaviour observed while implementing this
 

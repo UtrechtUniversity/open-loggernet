@@ -21,7 +21,9 @@ import sys
 import time
 from contextlib import contextmanager
 
-from . import pakbus, records
+import serial
+
+from . import flash, pakbus, records
 from .pakbus import VALUE_TYPES, PakBusError, PakBusLink
 from .read_values import split_spec
 from .set_value import parse_assignment
@@ -61,9 +63,14 @@ def choose_port(args) -> str:
 @contextmanager
 def connect(args):
     port = choose_port(args)
-    with PakBusLink(port, node=args.address, my_node=args.my_address, debug=args.debug) as link:
+    try:
+        link = PakBusLink(port, node=args.address, my_node=args.my_address, debug=args.debug)
+    except serial.SerialException as exc:
+        # Only one program can hold a COM port; LoggerNet holds it while a station is connected.
+        raise CliError(f"cannot open {port} ({exc}); disconnect LoggerNet or any other program using it") from exc
+    with link:
         if not link.hello():
-            raise CliError(f"the logger on {port} did not answer a hello; is LoggerNet connected to it?")
+            raise CliError(f"the logger on {port} did not answer a hello")
         yield link
 
 
@@ -86,7 +93,7 @@ def program_info(link: PakBusLink) -> dict:
         raise CliError(f"get programming statistics failed, response code {stats['resp_code']}")
     seconds, nanos = stats.pop("compile_time")
     stats["compile_time"] = pakbus.EPOCH + datetime.timedelta(seconds=seconds, microseconds=nanos / 1000)
-    stats["model"] = link.model
+    stats["model"] = stats.get("model") or link.model  # the logger says, on newer OSes
     stats["port"] = link._port_name
     return stats
 
@@ -235,6 +242,125 @@ def cmd_set(args) -> int:
     return 0
 
 
+def human_size(size: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.2f} {unit}"
+        size /= 1024
+    return str(size)
+
+
+def cmd_files_ls(args) -> int:
+    with connect(args) as link:
+        entries = link.directory()
+    rows = []
+    for e in entries:
+        flags = [pakbus.FILE_ATTRIBUTES.get(a, f"attribute {a}") for a in e.attributes]
+        if 5 in e.attributes:
+            flags = [f for f in flags if f != "running"]
+        rows.append({"name": e.name, "size": e.size, "modified": e.modified, "drive": e.is_drive, "flags": flags})
+    lines = []
+    for r in rows:
+        if r["drive"]:
+            lines.append(f"{r['name']:40s} {human_size(r['size']):>10s} free")
+        else:
+            lines.append(f"  {r['name']:38s} {human_size(r['size']):>10s}  {r['modified']}  {', '.join(r['flags'])}")
+    emit(args, rows, "\n".join(lines))
+    return 0
+
+
+def logger_path(name: str) -> str:
+    """`Main.CR6` -> `CPU:Main.CR6`; a name with a drive is kept."""
+    return name if ":" in name else f"CPU:{name}"
+
+
+def cmd_files_get(args) -> int:
+    remote = logger_path(args.name)
+    target = args.output or remote.split(":", 1)[1]
+    with connect(args) as link:
+        data = link.file_upload(remote, swath=983)
+    with open(target, "wb") as out:
+        out.write(data)
+    emit(args, {"name": remote, "bytes": len(data), "file": target}, f"{remote} -> {target} ({len(data)} bytes)")
+    return 0
+
+
+def cmd_files_put(args) -> int:
+    with open(args.file, "rb") as source:
+        data = source.read()
+    remote = logger_path(args.name or args.file.replace("\\", "/").rsplit("/", 1)[-1])
+    with connect(args) as link:
+        code = link.file_download(remote, data)
+    if code != 0:
+        raise CliError(f"{remote}: the logger refused the file, response code {code}")
+    emit(args, {"name": remote, "bytes": len(data)}, f"{args.file} -> {remote} ({len(data)} bytes)")
+    return 0
+
+
+def cmd_files_rm(args) -> int:
+    with connect(args) as link:
+        for name in args.names:
+            code, _ = link.file_control(logger_path(name), pakbus.FILECTL_DELETE)
+            if code != 0:
+                raise CliError(f"{logger_path(name)}: delete refused, response code {code}")
+    emit(args, [logger_path(n) for n in args.names], "\n".join(f"deleted {logger_path(n)}" for n in args.names))
+    return 0
+
+
+def program_status(link: PakBusLink) -> dict:
+    info = program_info(link)
+    info["state"] = pakbus.COMPILE_STATES.get(info["compile_state"], f"state {info['compile_state']}")
+    return info
+
+
+def describe_program(info: dict) -> str:
+    return (
+        f"program   {info['program_name'] or '<none>'} ({info['state']})\n"
+        f"power-up  {info['power_up_program'] or '<none>'}\n"
+        f"result    {info['compile_result'].strip()}"
+    )
+
+
+def file_control(args, link: PakBusLink, name: str, code: int) -> dict:
+    """Send a File Control command, wait out the logger's hold-off, reconnect if it
+    re-enumerated, and return the program status afterwards."""
+    resp, hold_off = link.file_control(name, code)
+    if resp != 0:
+        raise CliError(f"file control {code} on {name or 'the running program'}: response code {resp}")
+    if hold_off:
+        # Compiling makes the logger drop and recreate its USB device (docs/pakbus.md).
+        time.sleep(hold_off)
+        if flash.reconnect(link, args.port, model=link.model) is None:
+            raise CliError("the logger's USB port did not come back after the compile")
+    return program_status(link)
+
+
+def cmd_program(args) -> int:
+    with connect(args) as link:
+        if args.action == "status":
+            info = program_status(link)
+        elif args.action == "run":
+            name = logger_path(args.name)
+            code = pakbus.FILECTL_COMPILE_RUN_KEEP_DATA if args.keep_data else pakbus.FILECTL_COMPILE_RUN_POWERUP
+            if args.no_power_up:
+                code = pakbus.FILECTL_COMPILE_RUN_KEEP_POWERUP
+            info = file_control(args, link, name, code)
+        elif args.action == "stop":
+            code = pakbus.FILECTL_STOP_DELETE_DATA_CLEAR_POWERUP if args.delete_data else pakbus.FILECTL_PAUSE
+            info = file_control(args, link, "", code)
+        elif args.action == "resume":
+            current = link.get_program_stats().get("program_name")
+            if not current:
+                raise CliError("no program is loaded; use `oln program run NAME`")
+            info = file_control(args, link, current, pakbus.FILECTL_RESUME)
+        else:  # power-up
+            info = file_control(args, link, logger_path(args.name), pakbus.FILECTL_MARK_POWERUP)
+    emit(args, info, describe_program(info))
+    if args.action == "run" and "error" in info["compile_result"].lower():
+        return 1
+    return 0
+
+
 # --- argument parsing ------------------------------------------------------
 
 
@@ -280,6 +406,35 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("set", help="write values into the running program")
     p.add_argument("assignments", nargs="+", metavar="TABLE.FIELD=VALUE")
     p.set_defaults(func=cmd_set)
+
+    files = sub.add_parser("files", help="list, read, write and delete files on the logger")
+    fsub = files.add_subparsers(dest="files_command", required=True, metavar="ACTION")
+    fsub.add_parser("ls", help="drives, files, sizes and run flags").set_defaults(func=cmd_files_ls)
+    p = fsub.add_parser("get", help="copy a file off the logger")
+    p.add_argument("name", help="e.g. CPU:Main.CR6 (CPU: is assumed without a drive)")
+    p.add_argument("-o", "--output", help="local file (default: the logger file's name)")
+    p.set_defaults(func=cmd_files_get)
+    p = fsub.add_parser("put", help="copy a file onto the logger; it is not run")
+    p.add_argument("file")
+    p.add_argument("name", nargs="?", help="name on the logger (default: CPU: + the file's name)")
+    p.set_defaults(func=cmd_files_put)
+    p = fsub.add_parser("rm", help="delete files on the logger")
+    p.add_argument("names", nargs="+")
+    p.set_defaults(func=cmd_files_rm)
+
+    prog = sub.add_parser("program", help="run, stop, resume or inspect the logger's program")
+    psub = prog.add_subparsers(dest="action", required=True, metavar="ACTION")
+    psub.add_parser("status", help="running program, state, power-up program, compile result")
+    p = psub.add_parser("run", help="compile and run a program already on the logger")
+    p.add_argument("name")
+    p.add_argument("--keep-data", action="store_true", help="keep the data tables if they did not change")
+    p.add_argument("--no-power-up", action="store_true", help="do not run it at power-up")
+    p = psub.add_parser("stop", help="stop the running program; data is kept unless --delete-data")
+    p.add_argument("--delete-data", action="store_true", help="also delete its data and clear run-at-power-up")
+    psub.add_parser("resume", help="restart a stopped program, keeping its data")
+    p = psub.add_parser("power-up", help="make a program the one that runs at power-up, without running it")
+    p.add_argument("name")
+    prog.set_defaults(func=cmd_program)
     return parser
 
 

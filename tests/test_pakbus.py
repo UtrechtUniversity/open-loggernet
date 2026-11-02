@@ -205,5 +205,39 @@ class ReplyLimitTests(unittest.TestCase):
             LimitedLogger(0, 5, 3, True)._collect_recent_limited(table, 5, 64)
 
 
+class PseudoFileTests(unittest.TestCase):
+    """`.DIR2` and `.TDFS` as the CR6 (serial 27946) sent them to LoggerNet on 2026-11-02."""
+
+    DIR2 = bytes.fromhex(
+        "02 43 50 55 3a 00 4b ef a0 00 00 00"
+        "43 50 55 3a 74 65 6d 70 6c 61 74 65 65 78 61 6d 70 6c 65 2e 63 72 36 00 00 00 03 0b"
+        "32 30 32 36 2d 30 32 2d 32 34 20 31 33 3a 31 37 3a 32 32 00 00"
+        "43 50 55 3a 54 44 52 41 63 63 65 70 74 61 6e 63 65 2e 43 52 36 00 00 00 04 e7"
+        "32 30 32 36 2d 30 32 2d 32 34 20 31 33 3a 34 30 3a 34 38 00 01 02 00"
+    )
+
+    def test_directory_lists_drive_free_space_and_files(self) -> None:
+        drive, template, program = pakbus.parse_directory(self.DIR2)
+        self.assertEqual((drive.name, drive.size, drive.is_drive), ("CPU:", 31408128, True))
+        self.assertEqual((template.name, template.size, template.attributes), ("CPU:templateexample.cr6", 779, []))
+        self.assertEqual((program.size, program.modified, program.attributes), (1255, "2026-02-24 13:40:48", [1, 2]))
+
+    def test_dir_version_one_gives_free_space_as_an_integer(self) -> None:
+        dir1 = b"\x01" + self.DIR2[1:6] + bytes.fromhex("01 df 40 00") + self.DIR2[10:]
+        self.assertEqual(pakbus.parse_directory(dir1)[0].size, 31408128)
+
+    def test_tdfs_gives_model_and_tables(self) -> None:
+        tdfs = bytes.fromhex(
+            "11 43 52 36 2e 31 34 2e 34 2e 30 00 0c ce 32 37 39 34 36 00 00 00 00 00 00 44 03 15 23 02 eb ae 40"
+            "4e 6f 20 50 72 6f 67 72 61 6d 0d 0a 00 43 52 36 00 53 74 61 74 75 73 00 00 00 00 01 01 99"
+        )
+        summary = pakbus.parse_tdfs(tdfs)
+        self.assertEqual(
+            (summary["os_version"], summary["serial_number"], summary["model"]), ("CR6.14.4.0", "27946", "CR6")
+        )
+        self.assertEqual(summary["compile_result"], "No Program\r\n")
+        self.assertEqual(summary["tables"], [{"name": "Status", "size": 1, "signature": 0x0199}])
+
+
 if __name__ == "__main__":
     unittest.main()
