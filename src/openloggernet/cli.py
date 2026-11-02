@@ -156,7 +156,7 @@ def table_summary(table: pakbus.TableDef) -> dict:
         "name": table.name,
         "size": table.size,
         "record_size": table.record_size,
-        "interval": table.interval_sec or None,
+        "interval": table.interval.total_seconds() if table.is_interval else None,
         "fields": [
             {"name": f.name, "type": f.type_code, "count": f.count, "units": f.units, "processing": f.processing}
             for f in table.fields
@@ -169,7 +169,7 @@ def cmd_tables(args) -> int:
         tables = link.table_definitions()
     lines = [f"{'#':>3s}  {'table':22s} {'record':>7s} {'interval':>9s} {'size':>9s}  fields"]
     for t in tables:
-        interval = f"{t.interval_sec}s" if t.interval_sec else "event"
+        interval = f"{t.interval.total_seconds():g}s" if t.is_interval else "event"
         lines.append(f"{t.number:3d}  {t.name:22s} {t.record_size:6d}B {interval:>9s} {t.size:9d}  {len(t.fields)}")
     emit(args, [table_summary(t) for t in tables], "\n".join(lines))
     return 0

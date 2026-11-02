@@ -94,6 +94,15 @@ class CollectDataTests(unittest.TestCase):
     def test_bare_response_code_means_no_records(self) -> None:
         self.assertEqual(pakbus.parse_collect_response(self.table(60), b"\x00"), (0, [], False))
 
+    def test_sub_second_interval_spaces_the_records(self) -> None:
+        # A 10 Hz table, as oln_fast.CR6 declared it on the CR6 on 2026-11-02: 0 s + 100 000 000 ns.
+        field = pakbus.FieldDef("Value", 9, True, "Smp", "", "", 1, 1, [])
+        table = pakbus.TableDef(2, "Fast", 20000, 14, 0, [field], 0, 100_000_000)
+        body = b"\x00" + struct.pack(">HLH", 2, 7, 3) + self.stamp(100) + struct.pack(">3f", 1, 2, 3) + b"\x00"
+        _, records, _ = pakbus.parse_collect_response(table, body)
+        times = [(r[1] - pakbus.EPOCH).total_seconds() for r in records]
+        self.assertEqual(times, [100.0, 100.1, 100.2])
+
     def test_error_response_code_raises(self) -> None:
         with self.assertRaises(pakbus.PakBusError):
             pakbus.parse_collect_response(self.table(60), b"\x07")

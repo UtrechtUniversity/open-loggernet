@@ -395,6 +395,12 @@ record 104 of the CR300's `Table1`. It is gone.
 A range that starts below the oldest record held has only been tried while record 0 was still
 held; on a table whose ring has wrapped, that behaviour is untested.
 
+**Sub-second tables.** The interval in the `.TDF` is seconds and nanoseconds, and the nanoseconds
+matter: `oln_fast.CR6`, a 10 Hz table of 10-byte records on the CR6, declares 0 s + 100 000 000 ns.
+Collected while it grew, its records came back 0.1 s apart with the program's counter one ahead of
+the record number throughout, at 13 900 records/s with one request in flight and 18 500 with two
+(four was slower, 1 800/s), 2026-11-02.
+
 ### Partial records
 
 A record too large for one reply, such as `Status` or `Public`, comes back in fragments. LoggerNet
