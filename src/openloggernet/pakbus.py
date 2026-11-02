@@ -375,7 +375,7 @@ def parse_table_definitions(data: bytes) -> list:
         time_type = data[offset]
         offset += 1
         offset += 8  # time into the interval, unused here
-        interval_sec = struct.unpack_from(">L", data, offset)[0]
+        interval_sec, interval_nsec = struct.unpack_from(">LL", data, offset)
         offset += 8
         fields = []
         while data[offset] != 0:
@@ -411,7 +411,9 @@ def parse_table_definitions(data: bytes) -> list:
                 )
             )
         offset += 1  # field list terminator
-        tables.append(TableDef(number, name, size, time_type, interval_sec, fields, signature(data[start:offset])))
+        tables.append(
+            TableDef(number, name, size, time_type, interval_sec, fields, signature(data[start:offset]), interval_nsec)
+        )
     return tables
 
 
@@ -486,7 +488,7 @@ def parse_collect_response(table: TableDef, body: bytes) -> tuple[int, list, boo
                     secs, nanos = struct.unpack_from(">LL", body, at)
                     at += 8
                     stamp = EPOCH + datetime.timedelta(seconds=secs, microseconds=nanos / 1000)
-                when = stamp + datetime.timedelta(seconds=table.interval_sec * index)
+                when = stamp + table.interval * index
             else:
                 secs, nanos = struct.unpack_from(">LL", body, at)
                 at += 8
@@ -660,15 +662,20 @@ class TableDef:
     interval_sec: int
     fields: list
     signature: int
+    interval_nsec: int = 0  # the sub-second part, for tables faster than 1 s
 
     @property
     def record_size(self) -> int:
         return sum(f.size for f in self.fields)
 
     @property
+    def interval(self) -> datetime.timedelta:
+        return datetime.timedelta(seconds=self.interval_sec, microseconds=self.interval_nsec / 1000)
+
+    @property
     def is_interval(self) -> bool:
         """Interval tables carry one timestamp per fragment; event tables one per record."""
-        return self.interval_sec > 0
+        return self.interval_sec > 0 or self.interval_nsec > 0
 
 
 @dataclass
