@@ -172,6 +172,21 @@ limit may be an artefact of this client or of the host side -- something LoggerN
 host USB-serial difference -- rather than a hard CR300 limit. That is inference, not tested. Until that is understood the 64-byte budget is a workaround, and
 the CR350 entry is an assumption from the shared platform, not an observation.
 
+**On Windows the same CR300 sends whole replies.** Observed 2026-11-02, CR300 serial 33590, OS
+`CR300.Std.11.02`, Windows 11 `usbser` on COM4: Get Prog Stats came back intact, File Upload of
+the 1879-byte `.TDF` worked at a 1000-byte swath, and 3000 `Table1` records were collected in 2.8 s
+(1060 records/s) with no reply limit applied. So the cut is a property of the Linux host path, not
+of the logger. Windows reports the model only in the port description (`CR300 (COM4)`); its USB
+product string is empty, so `MAX_REPLY_FRAME` is not applied there.
+
+## Reply latency
+
+`PakBusLink.receive` used to call `serial.read(512)` with a 0.1 s port timeout, which returns only
+when 512 bytes have arrived or the timeout expires, so every reply shorter than 512 bytes cost
+100 ms. Measured on the CR1000X (serial 59624) on Windows on 2026-11-02: Hello, Clock and Collect
+Data all took 0.10–0.11 s; reading what is buffered instead brought them to 1–4 ms, and collecting
+3000 `FinApp_Poll` records (240 B each, three per reply) went from 321 s to 9 s.
+
 ## Reading stored records
 
 **Established on this logger on 2026-09-05.** Three things are needed: the table definitions, a
