@@ -20,10 +20,11 @@ import json
 import sys
 import time
 from contextlib import contextmanager
+from pathlib import Path
 
 import serial
 
-from . import flash, pakbus, records
+from . import flash, os_update, pakbus, records
 from . import settings as settings_lib
 from .pakbus import VALUE_TYPES, PakBusError, PakBusLink
 from .read_values import split_spec
@@ -422,6 +423,106 @@ def cmd_settings_set(args) -> int:
     return 0
 
 
+def cmd_watch(args) -> int:
+    """LoggerNet's Table Monitor: the newest record of one table, read again every interval."""
+    with connect(args) as link:
+        table = find_table(link.table_definitions(), args.table)
+        wanted = {f.lower() for f in args.fields}
+        previous: dict = {}
+        print_header = not args.json
+        while True:
+            started = time.monotonic()
+            try:
+                record = link.read_record(table)
+            except PakBusError as exc:
+                # A missed reply is reported and the watch goes on, as read_values --watch does.
+                print(f"oln: {exc}", file=sys.stderr)
+                record = None
+            if record is not None:
+                number, when, values = record
+                names = records.column_names(table)
+                flat = dict(zip(names, records.flat_values(table, values), strict=True))
+                if wanted:
+                    flat = {k: v for k, v in flat.items() if k.lower() in wanted or k.split("(")[0].lower() in wanted}
+                if args.json:
+                    row = {"record": number, "time": when.isoformat()}
+                    row.update({k: records._json_safe(v) for k, v in flat.items()})
+                    print(json.dumps(row), flush=True)
+                else:
+                    changed = {k: v for k, v in flat.items() if previous.get(k) != v}
+                    if print_header:
+                        print(f"{table.name}: {len(flat)} field(s), every {args.interval:g} s; Ctrl-C to stop")
+                        print_header = False
+                    stamp = records.timestamp(when)
+                    for k, v in (flat if args.all_values else changed).items():
+                        shown = f"{v:.6g}" if isinstance(v, float) else v
+                        print(f"[{stamp}] {k:30s} {shown}", flush=True)
+                previous = flat
+            if args.count and args.count == 1:
+                return 0
+            if args.count:
+                args.count -= 1
+            time.sleep(max(0.0, args.interval - (time.monotonic() - started)))
+
+
+def cmd_terminal(args) -> int:
+    """The logger's own terminal, as LoggerNet's Terminal Emulator opens it."""
+    import threading
+
+    with connect(args) as link:
+        tran = link.terminal_open()
+        if args.send is not None:
+            # One-shot: send the text and print what comes back, for scripts and the extension.
+            link.terminal_write(tran, args.send.encode().decode("unicode_escape").encode("latin-1"))
+            deadline = time.monotonic() + args.wait
+            out = bytearray()
+            while time.monotonic() < deadline:
+                out.extend(link.terminal_read(tran, 0.2))
+            text = out.decode("latin-1")
+            emit(args, {"output": text}, text)
+            return 0
+        lines: list[str] = []
+
+        def read_keyboard() -> None:
+            for line in sys.stdin:
+                lines.append(line)
+            lines.append("\x04")
+
+        threading.Thread(target=read_keyboard, daemon=True).start()
+        print("terminal open; type a line and Enter to send it, Ctrl-Z/Ctrl-D then Enter to leave", file=sys.stderr)
+        link.terminal_write(tran, b"\r")
+        while True:
+            text = link.terminal_read(tran, 0.1)
+            if text:
+                sys.stdout.write(text.decode("latin-1").replace("\r\n", "\n").replace("\r", "\n"))
+                sys.stdout.flush()
+            while lines:
+                line = lines.pop(0)
+                if line == "\x04":
+                    return 0
+                link.terminal_write(tran, line.rstrip("\r\n").encode("latin-1") + b"\r")
+
+
+def cmd_os(args) -> int:
+    image = Path(args.image)
+    if not image.is_file():
+        raise CliError(f"no such file: {image}")
+
+    def say(text: str) -> None:
+        if not args.json:
+            print(text, flush=True)
+
+    def progress(sent: int, total: int) -> None:
+        if not args.json and sys.stdout.isatty():
+            print(f"\r  {sent}/{total} bytes ({100 * sent // total}%)", end="", flush=True)
+
+    with connect(args) as link:
+        result = os_update.send_os(link, image, port=args.port, restore=not args.no_restore, say=say, progress=progress)
+    if args.json:
+        emit(args, result)
+    return 0 if result["after"] and result["after"] != result["before"] or args.same_ok else 1
+
+
 STATUS_SUMMARY = [
     (
         "Datalogger",
@@ -567,6 +668,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-commit", action="store_true", help="send the values without saving or resetting")
     p.set_defaults(func=cmd_settings_set)
     sett.set_defaults(func=cmd_settings, names=[])
+
+    p = sub.add_parser("watch", help="watch a table's newest record live, like LoggerNet's Table Monitor")
+    p.add_argument("table", nargs="?", default="Public")
+    p.add_argument("fields", nargs="*", help="only these fields (an array by its name, or one element)")
+    p.add_argument("--interval", type=float, default=1.0, help="seconds between reads (default 1)")
+    p.add_argument("--count", type=int, default=0, help="stop after this many reads")
+    p.add_argument("--all-values", action="store_true", help="print every value each time, not only changes")
+    p.set_defaults(func=cmd_watch)
+
+    p = sub.add_parser("terminal", help="the logger's terminal, like LoggerNet's Terminal Emulator")
+    p.add_argument("--send", metavar="TEXT", help=r"send TEXT (escapes allowed, e.g. '\r') and print the reply")
+    p.add_argument("--wait", type=float, default=1.5, help="seconds to collect the reply to --send (default 1.5)")
+    p.set_defaults(func=cmd_terminal)
+
+    p = sub.add_parser("os", help="send a new operating system (.obj) the way DevConfig's Manage OS does")
+    p.add_argument("image", help="operating system image, e.g. CR300.11.03.obj")
+    p.add_argument("--no-restore", action="store_true", help="leave the programs stopped afterwards")
+    p.add_argument("--same-ok", action="store_true", help="exit 0 even when the OS version is unchanged")
+    p.set_defaults(func=cmd_os)
     return parser
 
 

@@ -1,7 +1,7 @@
 # PakBus / BMP5 — the part of the protocol `src/openloggernet/pakbus.py` implements
 
-Reference for the wire format used to send a program to the CR6 over its USB port and to read
-values back off it. Only the five transactions the tooling needs are covered.
+Reference for the wire format `openloggernet` speaks to Campbell loggers over USB: sending programs
+and operating systems, collecting data, files, settings and the terminal.
 
 ## Sources, and their standing
 
@@ -19,6 +19,12 @@ and, for the File Control command codes, the CRBasic help topic `Info/webservera
 `FileControl` action codes are the same set exposed over HTTP.
 
 `src/openloggernet/pakbus.py` was written from these notes, not copied from either implementation.
+
+From 2026-11-02 a third source is **what Campbell's own software sends**: USB captures (USBPcap and
+Wireshark on Windows 11) of LoggerNet 4.10's Connect screen and Device Configuration Utility 2.34
+talking to a bench CR6 (serial 27946, OS 6.14.4.0), CR1000X (serial 59624, OS 8.5.0) and CR300
+(serial 33590, OS 11.02, then 11.03). Sections that rest on a capture say so, and what `oln` then
+did with the same messages on the same loggers.
 
 **Every field below was confirmed against the CR6 on the bench (serial 18624, OS CR6.14.5.1) on
 2026-08-26**: the logger accepted the packets, and its replies verified under our own signature
@@ -207,6 +213,45 @@ chosen by device type and catalogue major version. `openloggernet.settings` read
 when installed; they are not part of this repository. Strings are NUL-terminated; enums are one
 byte; `serial-no` is a uint4. The CR300's GOES settings use per-component offsets and are left as
 hex.
+
+## Operating system
+
+Device Configuration Utility 2.34's **Manage OS -> Update** took the CR300 (serial 33590) from OS
+11.02 to 11.03 on 2026-11-02 over an ordinary PakBus connection; USB capture:
+
+1. Settings Control action 2 (end the settings session), then Get Prog Stats for the running and
+   power-up programs.
+2. File Control **8** with an empty file name: the program stopped and its data was deleted; the
+   reply carried a 26 s hold-off and the logger reset (new USB address).
+3. File Download of `CPU:CR300.11.03.obj` (1 716 801 bytes) in 976-byte fragments, about 93 ms
+   each. DevConfig put the file name in the first fragment only; the rest had an empty name.
+4. File Control **1** on the image, the same code that compiles and runs a program: 40 s hold-off,
+   after which Get Prog Stats reported `CR300.11.3.0` and the image was gone from `CPU:`.
+5. File Control **2** on the old power-up program and **6** on the old running program. Settings
+   (Station Name) and the other files on `CPU:` were kept.
+
+DevConfig downloaded the image from Campbell and kept it as
+`Documents\CampbellSci\DevConfig\OperatingSystems\CR300.11.03.obj`. Campbell's instructions
+(`cr300/os-instructions.html` in the DevConfig library) describe this as the File Control method,
+"more likely (although not guaranteed)" to keep programs and settings than the boot-code method,
+which resets everything.
+
+`oln os IMAGE` does steps 2-5. Sent the same 11.03 image the CR300 already ran, the whole file was
+accepted but File Control 1 answered **response code 13**, and the image was then gone from `CPU:`.
+That code 13 means "already this OS" is inferred, not established: no other CR300 image was at
+hand. `oln` restores the programs after a failure as well.
+
+## Terminal
+
+LoggerNet 4.10's Terminal Emulator, captured against the CR6 on 2026-11-02:
+
+* BMP5 **0x0B**: security code (uint2), then the bytes typed. One transaction number serves the
+  whole session; the first message carries no bytes.
+* The logger answers **0x8B**: a response byte (0), then the terminal's text, e.g. `\nCR6>` for a
+  carriage return and `\nInvalid cmd: ?\n\nCR6>` for `?` + Enter.
+* LoggerNet marks these packets "expect more" (expect-more 1, priority 2); with expect-more 2 the
+  CR6 did not answer. It also ignored keystrokes sent 0.5 s after the opening message and answered
+  those sent after 1 s. The CR300 and CR1000X answer the same way.
 
 ## CR6 behaviour observed while implementing this
 
