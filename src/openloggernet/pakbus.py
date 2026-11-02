@@ -134,13 +134,23 @@ COLLECT_PARTIAL = 0x08
 # File Control command codes. Only the codes this tool uses are named; the full
 # set is listed in the CR6 help under Web Server/API Commands -> FileControl,
 # whose action codes are the same set.
-FILECTL_COMPILE_RUN_POWERUP = 1  # compile, run, and mark as run-on-power-up
-FILECTL_MARK_POWERUP = 2
-FILECTL_DELETE = 4
-FILECTL_COMPILE_RUN_KEEP_DATA = 6
-FILECTL_STOP = 7
-FILECTL_STOP_DELETE_DATA = 8
-FILECTL_COMPILE_RUN_KEEP_POWERUP = 10
+# Codes 1, 4, 11, 12 and 13 are what LoggerNet's File Control sent for the actions named
+# (USB capture against the CR6, 2026-11-02); 11 and 13 go with an empty file name. The others
+# are from the CRBasic help and are marked where not seen.
+FILECTL_COMPILE_RUN_POWERUP = 1  # "Run Now" + "Run On Power-up"; also flash's code
+FILECTL_MARK_POWERUP = 2  # help only
+FILECTL_DELETE = 4  # "Delete"
+FILECTL_COMPILE_RUN_KEEP_DATA = 6  # help only
+FILECTL_STOP = 7  # help only; LoggerNet stops with 11 or 13
+FILECTL_STOP_DELETE_DATA = 8  # help only
+FILECTL_COMPILE_RUN_KEEP_POWERUP = 10  # help only
+FILECTL_PAUSE = 11  # "Stop Program", "Retain Data"; empty file name
+FILECTL_RESUME = 12  # "Restart Program", "Do not erase data files"; with the program's name
+FILECTL_STOP_DELETE_DATA_CLEAR_POWERUP = 13  # "Stop Program", "Delete Data"; empty file name
+
+# Get Prog Stats compile state: 1 while LoggerNet showed the program running, 3 after it stopped
+# it with code 11, 0 with no program (CR6, 2026-11-02).
+COMPILE_STATES = {0: "no program", 1: "running", 3: "stopped"}
 
 DEFAULT_SWATH = 256  # file bytes per download packet; docs/lessons.md
 
@@ -505,6 +515,89 @@ def parse_partial_response(body: bytes) -> tuple[int, int, bytes]:
     return record, word & 0x7FFFFFFF, body[11:-1]
 
 
+# --- pseudo-files ------------------------------------------------------------
+
+# File attribute codes in `.DIR`/`.DIR2`. The running program carried 1 and 2 while LoggerNet's
+# File Control showed it as "running, power up" (CR6, CR1000X, CR300, 2026-11-02).
+FILE_ATTRIBUTES = {1: "running", 2: "run on power up"}
+
+
+@dataclass
+class DirEntry:
+    """A file, or a drive (`size` is then its free bytes and `modified` is empty)."""
+
+    name: str
+    size: int
+    modified: str
+    attributes: list
+
+    @property
+    def is_drive(self) -> bool:
+        return self.name.endswith(":")
+
+
+def parse_directory(data: bytes) -> list[DirEntry]:
+    """Parse `.DIR` or `.DIR2` into drives and files, in the logger's order.
+
+    Layout, from the CR6, CR1000X and CR300 on 2026-11-02 against LoggerNet's File Control:
+
+        version (byte; 1 for .DIR, 2 for .DIR2), then per entry:
+            name (asciiz), size (uint4), modified (asciiz), attributes (bytes, 0-terminated)
+
+    A drive entry has a name ending in ':' and an empty date, and its size field is the drive's
+    free space: a uint4 in `.DIR`, an IEEE4 float in `.DIR2`. The CR6's `.DIR2` said 0x4BEFA000,
+    31 408 128 as a float, where LoggerNet showed 31.41 MB free and `.DIR` said 31 408 128.
+    """
+    if not data:
+        raise PakBusError("empty directory")
+    version, at, out = data[0], 1, []
+    while at < len(data):
+        name, at = read_asciiz(data, at)
+        raw = data[at : at + 4]
+        at += 4
+        modified, at = read_asciiz(data, at)
+        end = data.index(b"\0", at)
+        attributes = list(data[at:end])
+        at = end + 1
+        if name.endswith(":") and version >= 2:
+            size = int(struct.unpack(">f", raw)[0])
+        else:
+            size = struct.unpack(">L", raw)[0]
+        out.append(DirEntry(name, size, modified, attributes))
+    return out
+
+
+def parse_tdfs(data: bytes) -> dict:
+    """Parse `.TDFS`, the summary LoggerNet reads on connecting.
+
+    Layout, from all three bench loggers on 2026-11-02: version (byte, 0x11), then the Get Prog
+    Stats fields (OS version, OS signature, serial number, power-up program, compile state,
+    program name, program signature, compile time, compile result), the **model** (asciiz), and
+    per table its name (asciiz), size (uint4) and signature (uint2).
+    """
+    out: dict = {"version": data[0]}
+    at = 1
+    out["os_version"], at = read_asciiz(data, at)
+    out["os_signature"] = struct.unpack_from(">H", data, at)[0]
+    out["serial_number"], at = read_asciiz(data, at + 2)
+    out["power_up_program"], at = read_asciiz(data, at)
+    out["compile_state"] = data[at]
+    out["program_name"], at = read_asciiz(data, at + 1)
+    out["program_signature"] = struct.unpack_from(">H", data, at)[0]
+    seconds, nanos = struct.unpack_from(">lL", data, at + 2)
+    out["compile_time"] = EPOCH + datetime.timedelta(seconds=seconds, microseconds=nanos / 1000)
+    out["compile_result"], at = read_asciiz(data, at + 10)
+    out["model"], at = read_asciiz(data, at)
+    tables = []
+    while at < len(data):
+        name, at = read_asciiz(data, at)
+        size, sig = struct.unpack_from(">LH", data, at)
+        at += 6
+        tables.append({"name": name, "size": size, "signature": sig})
+    out["tables"] = tables
+    return out
+
+
 # --- decoded packets -------------------------------------------------------
 
 
@@ -849,7 +942,16 @@ class PakBusLink:
         stats["compile_time"] = (seconds, nanos)
         offset += 8
         stats["compile_result"], offset = read_asciiz(data, offset)
+        # The CR6 appends the model and the station name, which LoggerNet's capture showed.
+        if offset < len(data):
+            stats["model"], offset = read_asciiz(data, offset)
+        if offset < len(data):
+            stats["station_name"], offset = read_asciiz(data, offset)
         return stats
+
+    def directory(self, timeout: float = 20.0) -> list:
+        """The logger's drives and files, from `.DIR2` as LoggerNet's File Control reads it."""
+        return parse_directory(self.file_upload(".DIR2", swath=983, timeout=timeout))
 
     def file_download(
         self, name: str, data: bytes, *, swath: int = DEFAULT_SWATH, progress=None, timeout: float = 20.0

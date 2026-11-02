@@ -39,6 +39,7 @@ program had changed, although only a `Public` variable was added and the table w
 (2026-09-24), but kept all 3212 records when the byte-identical program was sent again
 (2026-09-28). Observed in `knowledge/test_results/test_result_FinAppLib_24_09_2026_13_34.md` and
 `knowledge/test_results/test_result_FinAppLib_28_09_2026_08_34.md`; not tried on a CR6. A flash
-cannot be relied on to clear a table. The CHM documents code 13 as stopping the program and
-deleting its tables (`extracted_chm/Info/webserverapicommands1.htm`), untested here; otherwise
+cannot be relied on to clear a table. Code 13 with an empty file name, which LoggerNet sends for
+"Stop Program, Delete Data", stops the program and deletes its data (CR6, 2026-11-02; see
+docs/pakbus.md, File control command codes); `oln program stop --delete-data` sends it. Otherwise
 tell the runs apart by time.
