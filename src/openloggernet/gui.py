@@ -483,7 +483,7 @@ class Window(QMainWindow):
         target, _ = QFileDialog.getSaveFileName(self, f"Collect {table.name}", f"{table.name}.{suffix}")
         if not target:
             return
-        count = table.size if self.collect_all.isChecked() else self.collect_count.value()
+        count = cli.ALL_RECORDS if self.collect_all.isChecked() else self.collect_count.value()
         started = time.monotonic()
 
         def report(done: int, total: int) -> None:

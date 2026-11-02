@@ -43,7 +43,9 @@ File control code 1, which `flash` sends, erased `FinApp_Poll` on the bench CR10
 program had changed, although only a `Public` variable was added and the table was untouched
 (2026-09-24), but kept all 3212 records when the byte-identical program was sent again
 (2026-09-28). Observed in `knowledge/test_results/test_result_FinAppLib_24_09_2026_13_34.md` and
-`knowledge/test_results/test_result_FinAppLib_28_09_2026_08_34.md`; not tried on a CR6. A flash
+`knowledge/test_results/test_result_FinAppLib_28_09_2026_08_34.md`. The same on the CR6 and
+CR300 on 2026-11-02: sending the running `oln_test` program again under another name kept the
+`Ring` table's records and numbering while the program's own counter started again from 1. A flash
 cannot be relied on to clear a table. Code 13 with an empty file name, which LoggerNet sends for
 "Stop Program, Delete Data", stops the program and deletes its data (CR6, 2026-11-02; see
 docs/pakbus.md, File control command codes); `oln program stop --delete-data` sends it. Otherwise

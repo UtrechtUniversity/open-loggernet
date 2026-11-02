@@ -1386,6 +1386,7 @@ class PakBusLink:
         if not page:
             return []
         got = {record[0]: record for record in page}
+        begin = page[0][0]  # the oldest record held, when the range reached below it
         per_reply = len(page)
         windows = [(s, min(s + per_reply, end)) for s in range(page[-1][0] + 1, end, per_reply)]
         if progress:
@@ -1438,7 +1439,10 @@ class PakBusLink:
         newest = self.newest_record(table)
         if newest is None:
             return []
-        want = max(1, min(count, table.size))
+        # Not capped at the declared table size: the CR300 (OS 11.03) held about 30 800 records of a
+        # table its .TDF and DataTableInfo both declared as 50 (2026-11-02). A range reaching
+        # below the oldest record held is answered from the oldest one.
+        want = max(1, count)
         return self.collect_range(table, max(0, newest + 1 - want), newest + 1, progress)
 
     def _collect_recent_limited(self, table: TableDef, count: int, max_frame: int) -> list:

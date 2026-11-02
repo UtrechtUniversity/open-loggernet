@@ -175,6 +175,10 @@ def cmd_tables(args) -> int:
     return 0
 
 
+# "Every record": a range from record 0, which the logger answers from the oldest record it holds.
+ALL_RECORDS = 2**31
+
+
 def find_table(tables: list, name: str) -> pakbus.TableDef:
     table = next((t for t in tables if t.name.lower() == name.lower()), None)
     if table is None:
@@ -189,7 +193,7 @@ def cmd_collect(args) -> int:
         info = program_info(link)
         station = link.get_values("Status", "StationName")[0] if args.format == "toa5" else ""
         started = time.monotonic()
-        count = table.size if args.all else args.count
+        count = ALL_RECORDS if args.all else args.count
         collected = link.collect_recent(table, count)
         elapsed = time.monotonic() - started
     environment = {
