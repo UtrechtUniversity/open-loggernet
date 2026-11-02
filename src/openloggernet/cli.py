@@ -24,6 +24,7 @@ from contextlib import contextmanager
 import serial
 
 from . import flash, pakbus, records
+from . import settings as settings_lib
 from .pakbus import VALUE_TYPES, PakBusError, PakBusLink
 from .read_values import split_spec
 from .set_value import parse_assignment
@@ -242,7 +243,7 @@ def cmd_set(args) -> int:
     return 0
 
 
-def human_size(size: int) -> str:
+def human_size(size: float) -> str:
     for unit in ("B", "KB", "MB", "GB"):
         if size < 1024 or unit == "GB":
             return f"{size:.0f} {unit}" if unit == "B" else f"{size:.2f} {unit}"
@@ -253,7 +254,7 @@ def human_size(size: int) -> str:
 def cmd_files_ls(args) -> int:
     with connect(args) as link:
         entries = link.directory()
-    rows = []
+    rows: list[dict] = []
     for e in entries:
         flags = [pakbus.FILE_ATTRIBUTES.get(a, f"attribute {a}") for a in e.attributes]
         if 5 in e.attributes:
@@ -361,6 +362,122 @@ def cmd_program(args) -> int:
     return 0
 
 
+def read_settings(link: PakBusLink) -> tuple[dict, dict]:
+    got = link.get_settings()
+    return got, settings_lib.load_definitions(got["device_type"], got["major"])
+
+
+def cmd_settings(args) -> int:
+    with connect(args) as link:
+        got, defs = read_settings(link)
+    wanted = [w.lower() for w in args.names]
+    rows: list[dict] = []
+    for sid, (read_only, raw) in sorted(got["settings"].items()):
+        definition = defs.get(sid)
+        name = definition.name if definition else ""
+        if wanted and not any(w == str(sid) or w in name.lower() for w in wanted):
+            continue
+        value = settings_lib.decode(definition, raw)
+        rows.append(
+            {
+                "id": sid,
+                "name": name,
+                "read_only": read_only,
+                "value": value,
+                "tab": definition.tab if definition else "",
+            }
+        )
+    if not defs and not args.json:
+        print("(no DevConfig description library found; settings are shown by number)", file=sys.stderr)
+    lines = [f"{r['id']:4d}  {r['name'][:40]:40s} {'ro ' if r['read_only'] else '   '}{r['value']}" for r in rows]
+    emit(args, {"device_type": got["device_type"], "settings": rows}, "\n".join(lines))
+    return 0
+
+
+def cmd_settings_set(args) -> int:
+    with connect(args) as link:
+        got, defs = read_settings(link)
+        values = {}
+        for assignment in args.assignments:
+            key, sep, text = assignment.partition("=")
+            if not sep:
+                raise CliError(f"{assignment!r} is not NAME=VALUE")
+            sid = settings_lib.find(defs, key.strip())
+            if sid not in got["settings"]:
+                raise CliError(f"the logger has no setting {sid}")
+            if got["settings"][sid][0]:
+                raise CliError(f"setting {sid} ({defs[sid].name if sid in defs else '?'}) is read-only")
+            values[sid] = settings_lib.encode(defs.get(sid), text)
+        outcomes = link.set_settings(values, commit=not args.no_commit)
+    refused = {sid: code for sid, code in outcomes.items() if code != 1}
+    if refused:
+        raise CliError(f"the logger refused setting(s) {refused}; nothing was committed")
+    names = {sid: defs[sid].name if sid in defs else str(sid) for sid in values}
+    note = "" if args.no_commit else "; the logger saved them and is resetting"
+    emit(
+        args,
+        {"set": [names[s] for s in values], "committed": not args.no_commit},
+        f"set {', '.join(names.values())}{note}",
+    )
+    return 0
+
+
+STATUS_SUMMARY = [
+    (
+        "Datalogger",
+        [
+            "StationName",
+            "OSVersion",
+            "OSDate",
+            "OSSignature",
+            "SerialNumber",
+            "PanelTemp",
+            "MemorySize",
+            "WatchdogErrors",
+            "CPUDriveFree",
+            "CardStatus",
+        ],
+    ),
+    (
+        "Program",
+        [
+            "ProgName",
+            "StartTime",
+            "RunSignature",
+            "ProgSignature",
+            "CompileResults",
+            "MemoryFree",
+            "ProgErrors",
+            "SkippedScan",
+            "SkippedSystemScan",
+            "VarOutOfBound",
+        ],
+    ),
+    ("Power", ["Battery", "PowerSource", "LithiumBattery", "Low12VCount", "Low5VCount"]),
+]
+
+
+def cmd_status(args) -> int:
+    with connect(args) as link:
+        table = find_table(link.table_definitions(), "Status")
+        record = link.read_record(table)
+    if record is None:
+        raise CliError("the logger returned no Status record")
+    _, when, values = record
+    data = {k: (v.isoformat() if isinstance(v, datetime.datetime) else v) for k, v in values.items()}
+    if args.all or args.json:
+        emit(args, data, "\n".join(f"{k:28s} {v}" for k, v in data.items()))
+        return 0
+    lines = []
+    for heading, keys in STATUS_SUMMARY:
+        present = [k for k in keys if k in data]
+        if present:
+            lines.append(heading)
+            lines.extend(f"  {k:24s} {str(data[k]).strip()}" for k in present)
+    print("\n".join(lines))
+    return 0
+
+
 # --- argument parsing ------------------------------------------------------
 
 
@@ -435,10 +552,31 @@ def build_parser() -> argparse.ArgumentParser:
     p = psub.add_parser("power-up", help="make a program the one that runs at power-up, without running it")
     p.add_argument("name")
     prog.set_defaults(func=cmd_program)
+
+    p = sub.add_parser("status", help="the Status table, summarised as LoggerNet's Station Status")
+    p.add_argument("--all", action="store_true", help="every Status field")
+    p.set_defaults(func=cmd_status)
+
+    sett = sub.add_parser("settings", help="device settings, as Device Configuration Utility shows them")
+    ssub = sett.add_subparsers(dest="settings_command", metavar="ACTION")
+    p = ssub.add_parser("get", help="list settings (the default)")
+    p.add_argument("names", nargs="*", help="only settings whose number or name contains one of these")
+    p.set_defaults(func=cmd_settings)
+    p = ssub.add_parser("set", help="change settings; the logger saves them and resets")
+    p.add_argument("assignments", nargs="+", metavar="NAME=VALUE", help='e.g. "Station Name=Bench" or 5=Bench')
+    p.add_argument("--no-commit", action="store_true", help="send the values without saving or resetting")
+    p.set_defaults(func=cmd_settings_set)
+    sett.set_defaults(func=cmd_settings, names=[])
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    # `oln settings station` means `oln settings get station`.
+    if "settings" in argv:
+        at = argv.index("settings") + 1
+        if at < len(argv) and argv[at] not in ("get", "set", "-h", "--help"):
+            argv.insert(at, "get")
     args = build_parser().parse_args(argv)
     if isinstance(sys.stdout, io.TextIOWrapper):
         sys.stdout.reconfigure(line_buffering=True)
