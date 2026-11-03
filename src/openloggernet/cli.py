@@ -7,6 +7,8 @@
     oln collect Table1 --all --format toa5 -o Table1.dat
     oln get Public.PTemp Status.Battery
     oln set Public.DoRead=true
+    oln flash Program.CR6 --monitor 60
+    oln gui
 
 A logger is chosen with `--port` or `--model`; with neither, the only attached logger is used.
 `--json` prints one JSON document per command (JSON Lines for streams), which is what the VS Code
@@ -20,19 +22,47 @@ import json
 import sys
 import time
 from contextlib import contextmanager
+from importlib.metadata import version
 from pathlib import Path
 
 import serial
 
-from . import flash, os_update, pakbus, records
+from . import comusb_capture, flash, os_update, pakbus, records
 from . import settings as settings_lib
 from .pakbus import VALUE_TYPES, PakBusError, PakBusLink
-from .read_values import split_spec
-from .set_value import parse_assignment
 
 
 class CliError(Exception):
     """A failure to report as one line and exit status 1."""
+
+
+def split_spec(spec: str) -> tuple[str, str]:
+    """ "Public.PTemp" -> ("Public", "PTemp"). Array indices keep their parentheses."""
+    if "." not in spec:
+        raise ValueError(f"{spec!r} is not Table.Field -- e.g. Public.PTemp, Status.SkippedScan")
+    table, field = spec.split(".", 1)
+    if not table or not field:
+        raise ValueError(f"{spec!r} is not Table.Field -- e.g. Public.PTemp")
+    return table, field
+
+
+def parse_assignment(text: str) -> tuple[str, str, float | int, str]:
+    """ "Public.DoRead=true" -> ("Public", "DoRead", -1, "long").
+
+    `true`/`false` are written as CRBasic Booleans (-1/0), whole numbers as Long, anything else as
+    IEEE4.
+    """
+    if "=" not in text:
+        raise ValueError(f"{text!r} is not Table.Field=value")
+    spec, raw = text.split("=", 1)
+    table, field = split_spec(spec)
+    lowered = raw.strip().lower()
+    if lowered in ("true", "false"):
+        return table, field, -1 if lowered == "true" else 0, "long"
+    try:
+        return table, field, int(raw), "long"
+    except ValueError:
+        return table, field, float(raw), "ieee4"
 
 
 def emit(args, data, text: str | None = None) -> None:
@@ -439,7 +469,7 @@ def cmd_watch(args) -> int:
             try:
                 record = link.read_record(table)
             except PakBusError as exc:
-                # A missed reply is reported and the watch goes on, as read_values --watch does.
+                # A missed reply is reported and the watch goes on.
                 print(f"oln: {exc}", file=sys.stderr)
                 record = None
             if record is not None:
@@ -506,6 +536,20 @@ def cmd_terminal(args) -> int:
                 if line == "\x04":
                     return 0
                 link.terminal_write(tran, line.rstrip("\r\n").encode("latin-1") + b"\r")
+
+
+def cmd_flash(args) -> int:
+    return flash.run(args, choose_port(args))
+
+
+def cmd_capture(args) -> int:
+    return comusb_capture.serve(args)
+
+
+def cmd_gui(args) -> int:
+    from . import gui  # PySide6 comes with the `gui` extra
+
+    return gui.main()
 
 
 def cmd_os(args) -> int:
@@ -595,6 +639,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", help="pick the attached logger of this model, e.g. CR300")
     parser.add_argument("--address", type=int, default=1, help="logger PakBus address (default: 1)")
     parser.add_argument("--my-address", type=int, default=4094, help="this host's PakBus address (default: 4094)")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {version('openloggernet')}")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     parser.add_argument("--debug", action="store_true", help="dump every PakBus packet")
     sub = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
@@ -692,6 +737,26 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-restore", action="store_true", help="leave the programs stopped afterwards")
     p.add_argument("--same-ok", action="store_true", help="exit 0 even when the OS version is unchanged")
     p.set_defaults(func=cmd_os)
+
+    p = sub.add_parser("flash", help="compile a program locally, send it and its libraries, and run it")
+    p.add_argument("program", type=Path, help="CRBasic program to send, e.g. Main.CR6")
+    p.add_argument("--drive", default="CPU:", help="target drive (default: CPU:)")
+    p.add_argument("--no-compile", action="store_true", help="send the file without compiling it first")
+    p.add_argument("--no-includes", action="store_true", help="do not send the library files the program includes")
+    p.add_argument("--no-run", action="store_true", help="write the file to the logger but do not compile and run it")
+    p.add_argument("--monitor", type=float, metavar="SECONDS", default=0, help="then print ComUSB output this long")
+    p.add_argument("--send", metavar="TEXT", default="", help=r"text to write to ComUSB before monitoring, e.g. '\r'")
+    p.add_argument("--timeout", type=float, default=60, help="seconds to wait for compile results (default: 60)")
+    p.set_defaults(func=cmd_flash)
+
+    p = sub.add_parser("capture", help="log timestamped ComUSB text and send keys written to a FIFO (POSIX)")
+    p.add_argument("--log", type=Path, required=True)
+    p.add_argument("--fifo", default="/tmp/cr6-comusb.key")
+    p.add_argument("--baud", type=int, default=115200)
+    p.add_argument("--rawlog", action="store_true", help="also write a hex log next to --log")
+    p.set_defaults(func=cmd_capture)
+
+    sub.add_parser("gui", help="the same in a window (needs the gui extra)").set_defaults(func=cmd_gui)
     return parser
 
 

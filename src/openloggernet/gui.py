@@ -1,8 +1,8 @@
-"""`oln-gui`: a desktop window for a Campbell logger on USB, in the manner of LoggerNet's Connect
+"""`oln gui`: a desktop window for a Campbell logger on USB, in the manner of LoggerNet's Connect
 screen and Device Configuration Utility. Needs the `gui` extra (PySide6):
 
     uv tool install "openloggernet[gui]"
-    oln-gui
+    oln gui
 
 Connecting opens the logger's serial port and keeps it, as LoggerNet does, so nothing else can
 use that logger until Disconnect. Every PakBus call runs on one worker thread, in order; the window
