@@ -1,6 +1,6 @@
 [project]
 name = "openloggernet"
-version = "0.2.0"
+version = "0.3.0"
 description = "Open replacement for parts of the Campbell Scientific LoggerNet toolchain: PakBus/BMP5 client, compiler runner and logger CLIs"
 readme = "README.md"
 license = "MIT"
@@ -20,13 +20,6 @@ Repository = "https://github.com/UtrechtUniversity/open-loggernet"
 
 [project.scripts]
 oln = "openloggernet.cli:main"
-oln-gui = "openloggernet.gui:main"
-flash = "openloggernet.flash:main"
-read_values = "openloggernet.read_values:main"
-set_value = "openloggernet.set_value:main"
-collect_data = "openloggernet.collect_data:main"
-logger_clock = "openloggernet.logger_clock:main"
-comusb_capture = "openloggernet.comusb_capture:main"
 
 [project.optional-dependencies]
 gui = [

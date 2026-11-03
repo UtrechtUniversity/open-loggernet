@@ -1,12 +1,12 @@
 """Run the Campbell compiler from WSL (through powershell.exe) or macOS/Linux (through Wine).
 
 Set CR6COMP=opencrbasic to use the native re-implementation (the `opencrbasic` package, installed
-separately) instead of the exe. It reproduces CR6Comp's output for the FirnMelt programs but is not
-the reference compiler; see the opencrbasic README for its verified scope.
+separately) instead of the exe. It is not the reference compiler; see the opencrbasic README for its
+verified scope.
 
 The program's extension picks the compiler: `.CR6` uses compiler/CR6Comp.exe and `.CR1X` uses
 compiler/cr1000xcomp.exe. `compiler/` is found in the program's directory or the nearest parent
-that has it. Used by flash.py. Not a script.
+that has it. Used by `oln flash`.
 """
 
 import importlib.util

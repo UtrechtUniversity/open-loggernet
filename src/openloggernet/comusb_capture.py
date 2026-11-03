@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture timestamped CR6 ComUSB text and send tester keys through a FIFO."""
+"""`oln capture`: log timestamped ComUSB text and send keys written to a FIFO."""
 
 import argparse
 import os
@@ -105,17 +105,3 @@ def serve(args: argparse.Namespace) -> int:
             os.close(fifo_fd)
         if fifo.exists():
             fifo.unlink()
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", help="serial port (default: autodetected CR6)")
-    parser.add_argument("--baud", type=int, default=115200)
-    parser.add_argument("--log", type=Path, required=True)
-    parser.add_argument("--fifo", default="/tmp/cr6-comusb.key")
-    parser.add_argument("--rawlog", action="store_true")
-    return serve(parser.parse_args())
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
