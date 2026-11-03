@@ -41,6 +41,12 @@ class Cr6CompTests(unittest.TestCase):
         self.assertEqual(env["WINEPREFIX"], str(cr6comp.DEFAULT_WINEPREFIX))
         self.assertEqual(env["WINEDEBUG"], "-all")
 
+    def test_windows_runs_the_exe_directly(self) -> None:
+        with mock.patch.dict(os.environ, {"CR6COMP": ""}):
+            self.assertTrue(cr6comp.available("win32"))
+            args, _ = cr6comp.command(self.main, "win32")
+        self.assertEqual(args, [str(self.root.resolve() / "compiler" / "CR6Comp.exe"), "Main.CR6"])
+
     def test_extension_selects_logger_compiler(self) -> None:
         self.assertEqual(cr6comp.compiler_for(self.main).name, "CR6Comp.exe")
         self.assertEqual(cr6comp.compiler_for(self.main.with_name("FinAppAcceptance.CR1X")).name, "cr1000xcomp.exe")

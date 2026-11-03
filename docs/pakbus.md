@@ -53,7 +53,7 @@ not disturb PakBus traffic on the same USB port.
 | 4 | hop count | source node id |
 
 Link state `0x9` = ring, `0xA` = ready. Protocol `0x0` = PakCtrl, `0x1` = BMP5. The CR6's default
-PakBus address is 1; the flasher uses 4094 for itself, the address LoggerNet reserves for a client.
+PakBus address is 1; `oln` uses 4094 for itself, the address LoggerNet reserves for a client.
 
 ## Messages
 
@@ -74,7 +74,7 @@ time and carries the number of seconds to wait — observed from this logger.
 | Collect data | `0x09` | `0x89` | security (uint2), mode (byte), table number (uint2), table signature (uint2), mode parameters, field-number list terminated by a `0` uint2 |
 
 Every BMP5 command carries a 16-bit security code. `src/openloggernet/pakbus.py` always sends 0 and has no
-way to send anything else — see `README.md` for why.
+way to send anything else, so `oln` works only with an unsecured logger.
 
 Responses:
 
@@ -125,7 +125,7 @@ program's own data tables — `Public.PTemp`, `Status.SkippedScan` and `StationS
 read correctly. An array element can be named directly, e.g. `Acclima_VWC(2)`.
 
 A file larger than one packet is sent as a series of file-download commands that share one
-transaction number, each with its byte offset, the last one with the close flag set. The flasher
+transaction number, each with its byte offset, the last one with the close flag set. `oln`
 sends 976 bytes per packet on Windows and 256 elsewhere; a CR1000X ignored 512 from a Mac (`docs/lessons.md`).
 
 ### File control command codes
@@ -271,7 +271,8 @@ LoggerNet 4.10's Terminal Emulator, captured against the CR6 on 2026-11-02:
 ## CR300 replies cut at 64 bytes
 
 **Observed on a CR300 (serial 33590, OS CR300.Std.11.02) over USB on Linux `cdc_acm`, on
-2026-10-20. Needs further research before it is treated as a property of the logger.**
+2026-10-20.** On Windows the same logger sends whole replies (below), so the cut belongs to the
+Linux host path.
 
 * A reply frame longer than 64 bytes never arrives whole. The host receives exactly the first 64
   bytes, one full-speed USB packet, and nothing more; the frame fails its signature and the request
@@ -286,25 +287,23 @@ LoggerNet 4.10's Terminal Emulator, captured against the CR6 on 2026-11-02:
 `pakbus` works around this with `MAX_REPLY_FRAME`: it reads the model from the USB product
 string and, for the CR300 and CR350, sizes File Upload swaths and Collect Data ranges to fit 64
 bytes. That collects about 39 records a second: 126 042 one-minute `Table1` records took 54
-minutes. **LoggerNet collects the same logger much faster** (human report, 2026-10-20), so the
-limit may be an artefact of this client or of the host side -- something LoggerNet negotiates, or a
-host USB-serial difference -- rather than a hard CR300 limit. That is inference, not tested. Until that is understood the 64-byte budget is a workaround, and
-the CR350 entry is an assumption from the shared platform, not an observation.
+minutes. Why the Linux host path cuts replies is not known, so the 64-byte budget is a workaround,
+and the CR350 entry is an assumption from the shared platform, not an observation.
 
 **On Windows the same CR300 sends whole replies.** Observed 2026-11-02, CR300 serial 33590, OS
 `CR300.Std.11.02`, Windows 11 `usbser` on COM4: Get Prog Stats came back intact, File Upload of
 the 1879-byte `.TDF` worked at a 1000-byte swath, and 3000 `Table1` records were collected in 2.8 s
-(1060 records/s) with no reply limit applied. So the cut is a property of the Linux host path, not
-of the logger. Windows reports the model only in the port description (`CR300 (COM4)`); its USB
+(1060 records/s) with no reply limit applied. Windows reports the model only in the port description (`CR300 (COM4)`); its USB
 product string is empty, so `MAX_REPLY_FRAME` is not applied there.
 
 ## Reply latency
 
-`PakBusLink.receive` used to call `serial.read(512)` with a 0.1 s port timeout, which returns only
-when 512 bytes have arrived or the timeout expires, so every reply shorter than 512 bytes cost
-100 ms. Measured on the CR1000X (serial 59624) on Windows on 2026-11-02: Hello, Clock and Collect
-Data all took 0.10–0.11 s; reading what is buffered instead brought them to 1–4 ms, and collecting
-3000 `FinApp_Poll` records (240 B each, three per reply) went from 321 s to 9 s.
+`PakBusLink.receive` reads only what the port has buffered. A fixed-size read such as
+`serial.read(512)` with a 0.1 s port timeout returns only when 512 bytes have arrived or the
+timeout expires, so every shorter reply costs 100 ms. Measured on the CR1000X (serial 59624) on
+Windows on 2026-11-02: with the fixed-size read, Hello, Clock and Collect Data all took
+0.10–0.11 s and 3000 `FinApp_Poll` records (240 B each, three per reply) took 321 s; reading what
+is buffered brought the transactions to 1–4 ms and the collection to 9 s.
 
 ## Reading stored records
 
@@ -389,10 +388,6 @@ record received. It got 1722 records/s from the same table. It then asks for the
 of one reply's worth, with two requests in flight. The CR1000X answers them back to back:
 `FinApp_Poll` (240-byte records, three per reply) went from 1026 to 1600 records/s. The CR300
 spends its time per request inside the logger, and gains nothing.
-
-The previous method, paging "most recent N" windows and finding the largest answerable N by
-binary search, managed 356 records/s on `FinApp_Poll` and stopped with "no progress" after
-record 104 of the CR300's `Table1`. It is gone.
 
 **A wrapped table is answered from its oldest record.** `tests/hardware/oln_test.crbasic` writes a
 50-record `Ring` table at 10 Hz. Once it had wrapped, a range from record 0 was answered from the

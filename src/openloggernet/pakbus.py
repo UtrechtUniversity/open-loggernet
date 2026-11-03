@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Minimal PakBus/BMP5 client for a Campbell logger over serial: send program files, read values back.
+"""PakBus/BMP5 client for a Campbell logger over a USB serial port.
 
-Written against the CR6 and also used with the CR1000X, CR300 and CR350. The link reads the
-logger model from the USB product string and sizes its requests to that model's reply limit
-(`MAX_REPLY_FRAME`).
+Written against the CR6 and used with the CR1000X and CR300. The link reads the logger model from
+the USB product string and sizes its requests to that model's reply limit (`MAX_REPLY_FRAME`).
 
-Only the transactions this repository's bench tooling needs are implemented:
+Transactions implemented:
 
     Hello              (PakCtrl 0x09 / 0x89)  open the link
     File Download      (BMP5    0x1c / 0x9c)  write a file to the logger
@@ -16,6 +15,8 @@ Only the transactions this repository's bench tooling needs are implemented:
     Clock              (BMP5    0x17 / 0x97)  read or adjust the logger clock
     File Upload        (BMP5    0x1d / 0x9d)  read a file off the logger, incl. `.TDF`
     Collect Data       (BMP5    0x09 / 0x89)  read stored data table records
+    Terminal           (BMP5    0x0b / 0x8b)  the logger's terminal
+    Get/Set Settings   (PakCtrl 0x07, 0x0f, 0x10, 0x13)  DevConfig settings
 
 Wire-format notes and sources: docs/pakbus.md
 """
@@ -862,8 +863,8 @@ class PakBusLink:
         """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            # Ask only for what is already buffered, or one byte. `read(512)` blocked until 512
-            # bytes or the port timeout, which put 100 ms on every short reply (docs/pakbus.md).
+            # Ask only for what is already buffered, or one byte. A fixed-size read blocks until it
+            # fills or the port times out, which puts 100 ms on every short reply (docs/pakbus.md).
             chunk = self.port.read(max(1, self.port.in_waiting))
             if chunk:
                 self._buf.extend(chunk)
@@ -931,7 +932,7 @@ class PakBusLink:
         """Open the link. Returns True if the logger answered.
 
         Retried because the first packet written after the USB port is opened
-        is regularly lost, presumably while the CDC-ACM link settles.
+        has been lost (docs/lessons.md), presumably while the CDC-ACM link settles.
         """
         for _ in range(attempts):
             tran = self.next_tran()

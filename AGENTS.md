@@ -1,9 +1,9 @@
 # Repository instructions
 
 `openloggernet` is an open replacement for parts of Campbell Scientific's LoggerNet: a PakBus/BMP5
-client, a compiler runner and logger command-line tools. It is published to PyPI and will later
-back the flash and collect actions of the
-[open-crbasic VS Code extension](https://github.com/UtrechtUniversity/open-crbasic-vsix).
+client, a compiler runner and the `oln` command line. It is published to PyPI, and the
+[open-crbasic VS Code extension](https://github.com/UtrechtUniversity/open-crbasic-vsix) drives
+loggers through `oln --json`.
 
 Priorities: correctness, evidence, simplicity, minimal scope, maintainability.
 
@@ -11,7 +11,7 @@ Priorities: correctness, evidence, simplicity, minimal scope, maintainability.
 
 | Path | Contents |
 |---|---|
-| `src/openloggernet/` | The package; one module per command plus `pakbus` and `cr6comp`. |
+| `src/openloggernet/` | The package: `cli` (the `oln` command), `pakbus` (the PakBus client), `cr6comp`, and modules for the larger commands. |
 | `tests/` | Host tests; no logger needed. |
 | `docs/pakbus.md` | Wire format and what has been confirmed on hardware. |
 | `docs/lessons.md` | Logger behaviour the code depends on, with evidence. |

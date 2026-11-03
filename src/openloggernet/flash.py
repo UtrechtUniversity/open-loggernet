@@ -7,7 +7,7 @@
 
 It compiles with Campbell's compiler (`cr6comp`), writes the program and the library files it
 includes to the logger, tells the logger to compile and run it, and reads the compile results back.
-The helpers here are also used by `oln` and the OS update.
+`reconnect` is also used by every other command that makes the logger re-enumerate.
 """
 
 import os
@@ -100,8 +100,8 @@ def describe(stats: dict) -> str:
 def monitor(link: PakBusLink, seconds: float, send: bytes = b"") -> None:
     """Print whatever the running program writes to ComUSB.
 
-    The tester programs in crbasic/ are menu driven and stay silent until they
-    receive a keystroke, so `send` is written first when given.
+    A menu-driven program stays silent until it receives a keystroke, so `send`
+    is written first when given.
     """
     if send:
         link.port.write(send)
