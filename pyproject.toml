@@ -1,7 +1,7 @@
 [project]
 name = "openloggernet"
 version = "0.3.0"
-description = "Open replacement for parts of the Campbell Scientific LoggerNet toolchain: PakBus/BMP5 client, compiler runner and logger CLIs"
+description = "Open replacement for parts of the Campbell Scientific LoggerNet toolchain: PakBus/BMP5 client, compiler runner and the oln logger command line"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

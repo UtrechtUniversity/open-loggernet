@@ -9,7 +9,7 @@ Scientific.
 uv tool install openloggernet        # or: pip install openloggernet
 ```
 
-Everything is a subcommand of `oln`. Python 3.14 or newer is required; development uses 3.15.
+Everything is a subcommand of `oln`. Python 3.14 or newer is required.
 
 ## `oln`: the logger from the command line
 
@@ -120,8 +120,8 @@ unsecured logger.
 
 ## Compiling without Windows
 
-`cr6comp` runs `CR6Comp.exe` through `powershell.exe` on WSL and through Wine on macOS and
-Linux (on Ubuntu: `dpkg --add-architecture i386 && apt-get install wine32:i386 wine64 wine`).
+`cr6comp` runs `CR6Comp.exe` directly on Windows, through `powershell.exe` on WSL and through Wine
+on macOS and Linux (on Ubuntu: `dpkg --add-architecture i386 && apt-get install wine32:i386 wine64 wine`).
 The compilers are Campbell's and are not part of this package: `compiler/` is looked up in the
 program's directory and then each parent, so a program in `src/` finds `../compiler/`. Copy
 `CR6Comp.exe` (and `cr1000xcomp.exe` for `.CR1X`) there from a CRBasic Editor or Device

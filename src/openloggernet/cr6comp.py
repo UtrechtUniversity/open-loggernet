@@ -1,4 +1,5 @@
-"""Run the Campbell compiler from WSL (through powershell.exe) or macOS/Linux (through Wine).
+"""Run the Campbell compiler: directly on Windows, through powershell.exe on WSL, through Wine on
+macOS and Linux.
 
 Set CR6COMP=opencrbasic to use the native re-implementation (the `opencrbasic` package, installed
 separately) instead of the exe. It is not the reference compiler; see the opencrbasic README for its
@@ -48,6 +49,8 @@ def native() -> bool:
 def available(platform: str = sys.platform) -> bool:
     if native():
         return importlib.util.find_spec("opencrbasic") is not None
+    if platform == "win32":
+        return True
     if platform == "darwin":
         return find_wine() is not None
     return shutil.which("powershell.exe") is not None or find_wine() is not None
@@ -70,6 +73,8 @@ def command(program: Path, platform: str = sys.platform) -> tuple[list[str], dic
     if native():
         return [sys.executable, "-m", "opencrbasic", "--no-message-file", program.name], env
     compiler = compiler_for(program)
+    if platform == "win32":
+        return [str(compiler), program.name], env
     if platform == "darwin" or shutil.which("powershell.exe") is None:
         wine = find_wine()
         if wine is None:
