@@ -9,7 +9,28 @@ Scientific.
 uv tool install openloggernet        # or: pip install openloggernet
 ```
 
-Everything is a subcommand of `oln`. Python 3.14 or newer is required.
+Everything is a subcommand of `oln`. Python 3.14 or newer is required. The optional GUI needs the
+`gui` extra, see below.
+
+## Supported loggers and limits
+
+`oln` speaks PakBus/BMP5 over a **USB serial port** only. It was written against the CR6 and has
+been used with the CR1000X and CR300; a CR350 is recognised (reply-size limit) but has not been
+tried. Other Campbell loggers, and everything the wire format is not documented for, are untested.
+What `oln` is not:
+
+- It is not LoggerNet. There is no server, scheduled collection, TCP/IP, RF, modem or multi-hop
+  PakBus routing, and no other protocols such as Modbus or DNP3.
+- It works only with an **unsecured** logger: the PakBus security code is fixed at 0 on purpose.
+- It does not include Campbell's compilers, operating systems or Device Configuration Utility
+  descriptions; see [Compiling without Windows](#compiling-without-windows).
+- Behaviour was confirmed on a few bench loggers and OS versions ([docs/pakbus.md](docs/pakbus.md)
+  records what, and what is not confirmed). Other models and OS versions may differ.
+
+**Be careful with a real logger.** `flash` and `program run` delete the data tables of the program
+they replace, `program stop --delete-data` deletes data, `settings set` saves and resets the logger,
+and `os` replaces its operating system. Collect what you need first and try changes on a bench
+logger before a field one. The software is provided as is, without warranty (see [License](#license)).
 
 ## `oln`: the logger from the command line
 
@@ -126,8 +147,11 @@ The compilers are Campbell's and are not part of this package: `compiler/` is lo
 program's directory and then each parent, so a program in `src/` finds `../compiler/`. Copy
 `CR6Comp.exe` (and `cr1000xcomp.exe` for `.CR1X`) there from a CRBasic Editor or Device
 Configuration Utility install.
+Only `.CR6` and `.CR1X` programs have a local compiler here; for other extensions (e.g. `.CR300`) use
+`oln flash --no-compile`, or `CR6COMP=opencrbasic`.
+
 `CR6COMP=opencrbasic` uses the native re-implementation from the
-[opencrbasic](https://github.com/UtrechtUniversity/open-crbasic) package instead (`pip install
+[open-crbasic](https://github.com/UtrechtUniversity/open-crbasic) project instead (`pip install
 opencrbasic`); it is not the reference compiler, so keep the exe as the gate before flashing hardware.
 
 ## Compiling on macOS
@@ -175,3 +199,15 @@ as `<version>.dev<run number>`. A push to `main` publishes to [PyPI](https://pyp
 when the `version` in `pyproject.toml` has not been released yet, so bump it (`uv version --bump
 patch`) in the change that should be released. Publishing uses PyPI trusted publishing from the
 `pypi` and `testpypi` GitHub environments; no API token is stored in the repository.
+
+## Related projects
+
+- [open-crbasic](https://github.com/UtrechtUniversity/open-crbasic): open-source CRBasic
+  pre-compilers and language server (`opencrbasic` on PyPI).
+- [open-crbasic-vsix](https://github.com/UtrechtUniversity/open-crbasic-vsix): VS Code extension
+  for CRBasic that drives loggers through `oln --json`.
+
+## License
+
+[MIT](LICENSE), (c) 2026 Utrecht University. Campbell Scientific, LoggerNet, CRBasic and the logger
+model names are trademarks of their owners; this project is independent of them.

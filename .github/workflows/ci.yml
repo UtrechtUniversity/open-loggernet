@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'pypi' || 'testpypi' }}
     permissions:
-      contents: read
+      contents: write  # GitHub release on main
       id-token: write
     steps:
       - uses: actions/checkout@v7
@@ -43,3 +43,10 @@ jobs:
         uses: pypa/gh-action-pypi-publish@v1.14.3
         with:
           repository-url: https://test.pypi.org/legacy/
+      - if: github.ref_name == 'main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v$(uv version --short)"
+          gh release view "$tag" >/dev/null 2>&1 ||
+            gh release create "$tag" dist/* --target "$GITHUB_SHA" --generate-notes
