@@ -21,7 +21,7 @@ import io
 import json
 import sys
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 from importlib.metadata import version
 from pathlib import Path
 
@@ -133,10 +133,13 @@ def program_info(link: PakBusLink) -> dict:
 def cmd_info(args) -> int:
     with connect(args) as link:
         info = program_info(link)
+    info["os_latest"] = os_update.os_check(info["model"], info["os_version"])
+    latest = info["os_latest"]
     lines = [
         f"model           {info['model'] or '?'} on {info['port']}",
         f"serial number   {info['serial_number']}",
-        f"OS version      {info['os_version']} (signature {info['os_signature']})",
+        f"OS version      {info['os_version']} (signature {info['os_signature']})"
+        + (f"; {latest['latest']} is available from {latest['url']}" if latest["outdated"] else ""),
         f"program         {info['program_name'] or '<none>'} (signature {info['program_signature']})",
         f"power-up        {info['power_up_program'] or '<none>'}",
         f"compiled        {info['compile_time']:%Y-%m-%d %H:%M:%S}",
@@ -168,7 +171,14 @@ def cmd_clock(args) -> int:
             adjust = (target - logger).total_seconds() if args.set else -offset
             whole = int(adjust)
             link.clock(whole, int(round((adjust - whole) * 1e9)))
-            logger, host, trip = measure_clock(link)
+            # The CR6 applies the adjustment after it replies: a read straight after still showed the
+            # old time and one 0.5 s later the new one (serial 27946, OS 14.4.0, 2026-11-19).
+            wanted = (target - host).total_seconds()  # offset from the host clock asked for
+            for _ in range(10):
+                time.sleep(0.3)
+                logger, host, trip = measure_clock(link)
+                if abs((logger - host).total_seconds() - wanted) <= args.max_drift:
+                    break
             result.update(adjusted=adjust, logger_after=logger, offset_after=(logger - host).total_seconds())
     text = f"logger    {result['logger']:%Y-%m-%d %H:%M:%S.%f}\nhost UTC  {result['host']:%Y-%m-%d %H:%M:%S.%f}\n"
     text += f"offset    {result['offset']:+.3f} s (round trip {result['round_trip'] * 1000:.0f} ms)"
@@ -221,7 +231,7 @@ def cmd_collect(args) -> int:
         tables = link.table_definitions()
         table = find_table(tables, args.table)
         info = program_info(link)
-        station = link.get_values("Status", "StationName")[0] if args.format == "toa5" else ""
+        station = link.get_values("Status", "StationName")[0] if args.format in ("toa5", "tob1") else ""
         started = time.monotonic()
         count = ALL_RECORDS if args.all else args.count
         collected = link.collect_recent(table, count)
@@ -236,13 +246,21 @@ def cmd_collect(args) -> int:
     }
     rate = len(collected) / elapsed if elapsed else 0.0
     if args.output:
-        with open(args.output, "w", newline="", encoding="utf-8") as out:
-            records.write_records(out, table, collected, args.format, environment)
+        if args.format == "tob1":
+            with open(args.output, "wb") as binary:
+                records.write_tob1(binary, table, collected, environment)
+        else:
+            with open(args.output, "w", newline="", encoding="utf-8") as out:
+                records.write_records(out, table, collected, args.format, environment)
         summary = {"table": table.name, "records": len(collected), "seconds": elapsed, "file": args.output}
         emit(args, summary, f"{len(collected)} record(s) from {table.name} -> {args.output} ({rate:.0f} records/s)")
+        return 0
+    if args.format == "tob1" and not args.json:
+        records.write_tob1(sys.stdout.buffer, table, collected, environment)
+        sys.stdout.buffer.flush()
     else:
         records.write_records(sys.stdout, table, collected, "jsonl" if args.json else args.format, environment)
-        print(f"{len(collected)} record(s) in {elapsed:.2f} s ({rate:.0f} records/s)", file=sys.stderr)
+    print(f"{len(collected)} record(s) in {elapsed:.2f} s ({rate:.0f} records/s)", file=sys.stderr)
     return 0
 
 
@@ -402,8 +420,28 @@ def read_settings(link: PakBusLink) -> tuple[dict, dict]:
     return got, settings_lib.load_definitions(got["device_type"], got["major"])
 
 
+def named_settings(args, link: PakBusLink) -> int | None:
+    """`oln settings` from the logger's own setting names, when there is no DevConfig library.
+    None when the logger does not list its settings, so the numbered listing is used instead."""
+    rows = settings_lib.read_named(link)
+    if not rows:
+        return None
+    wanted = [w.lower() for w in args.names]
+    rows = [r for r in rows if not wanted or any(w in r["name"].lower() for w in wanted)]
+    lines = [
+        f"{r['name'][:32]:32s} {'ro ' if r['read_only'] else '   '}{r['value'] if 'error' not in r else '!! ' + r['error']}"
+        for r in rows
+    ]
+    emit(args, {"device_type": None, "named": True, "settings": rows}, "\n".join(lines))
+    return 0
+
+
 def cmd_settings(args) -> int:
     with connect(args) as link:
+        if settings_lib.library_path() is None:
+            done = named_settings(args, link)
+            if done is not None:
+                return done
         got, defs = read_settings(link)
     wanted = [w.lower() for w in args.names]
     rows: list[dict] = []
@@ -429,8 +467,34 @@ def cmd_settings(args) -> int:
     return 0
 
 
+def set_named_settings(args, link: PakBusLink) -> int | None:
+    """`oln settings set` by the logger's own setting names; None when it does not list them. Each
+    value is written to the Settings table on its own and kept by the logger, without a reset."""
+    listed = {r["name"].lower(): r for r in settings_lib.list_named(link)}
+    if not listed:
+        return None
+    writes = []
+    for assignment in args.assignments:
+        key, sep, text = assignment.partition("=")
+        row = listed.get(key.strip().lower())
+        if not sep or row is None:
+            raise CliError(f"{assignment!r} is not NAME=VALUE with a setting the logger lists")
+        if row["read_only"]:
+            raise CliError(f"setting {row['name']} is read-only")
+        writes.append((row["name"], *settings_lib.named_value(row["type"], text)))
+    for name, value, value_type in writes:
+        link.set_values("Settings", name, value, value_type=value_type)
+    names = [name for name, _, _ in writes]
+    emit(args, {"set": names, "committed": True}, f"set {', '.join(names)}")
+    return 0
+
+
 def cmd_settings_set(args) -> int:
     with connect(args) as link:
+        if settings_lib.library_path() is None:
+            done = set_named_settings(args, link)
+            if done is not None:
+                return done
         got, defs = read_settings(link)
         values = {}
         for assignment in args.assignments:
@@ -539,7 +603,20 @@ def cmd_terminal(args) -> int:
 
 
 def cmd_flash(args) -> int:
-    return flash.run(args, choose_port(args))
+    if not args.json:
+        return flash.run(args, choose_port(args))
+    # Under --json the progress goes to stderr and stdout carries one document: what was sent and
+    # the program statistics read back, or {"error": ...}.
+    result: dict = {}
+    with redirect_stdout(sys.stderr):
+        code = flash.run(args, choose_port(args), result)
+    if "compile_time" in result:
+        seconds, nanos = result["compile_time"]
+        result["compile_time"] = pakbus.EPOCH + datetime.timedelta(seconds=seconds, microseconds=nanos / 1000)
+    if code and "error" not in result:
+        result["error"] = "oln flash failed"
+    emit(args, result)
+    return code
 
 
 def cmd_capture(args) -> int:
@@ -547,7 +624,16 @@ def cmd_capture(args) -> int:
 
 
 def cmd_gui(args) -> int:
-    from . import gui  # PySide6 comes with the `gui` extra
+    try:
+        from . import gui  # PySide6 comes with the `gui` extra
+    except ModuleNotFoundError as exc:
+        if exc.name is None or not exc.name.startswith(("PySide6", "shiboken6")):
+            raise
+        raise CliError(
+            "the window needs PySide6, which comes with the gui extra: "
+            '`uv tool install --reinstall "openloggernet[gui]"`, or "openloggernet[gui]" in a project\'s '
+            "dependencies"
+        ) from exc
 
     return gui.main()
 

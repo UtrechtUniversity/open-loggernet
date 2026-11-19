@@ -1185,23 +1185,28 @@ class PakBusLink:
         """Write one or more consecutive values into a running program. Raises on any failure.
 
         The counterpart to `get_values`. `value_type` names the representation the values are
-        sent in and must be a numeric key of VALUE_TYPES: unlike a read, a write cannot ask the
-        logger to parse its own formatting, so "asciiz" is rejected. Writing more than one value
+        sent in and must be a numeric key of VALUE_TYPES, or "ascii" for one string: unlike a read,
+        a write cannot ask the logger to parse its own formatting, so "asciiz" is rejected. Writing more than one value
         walks consecutive array elements from `field`.
         """
-        if value_type not in VALUE_TYPES:
+        if value_type == "ascii":
+            # A string goes as type 11 (ASCII), its bytes and a NUL, the swath being their count:
+            # how Station Name was written into the CR6's Settings table on 2026-11-19.
+            type_code, payload = 11, str(values).encode("latin-1") + b"\0"
+            values = payload
+        elif value_type not in VALUE_TYPES:
             raise ValueError(f"unknown value type {value_type!r}; expected one of {', '.join(sorted(VALUE_TYPES))}")
-        if value_type == "asciiz":
+        elif value_type == "asciiz":
             raise ValueError(
                 "set_values needs an explicit numeric type; the logger is not asked to parse its own formatting"
             )
-        if isinstance(values, (int, float)):
-            values = [values]
-        if not values:
-            raise ValueError("nothing to write")
-
-        type_code, fmt, size = VALUE_TYPES[value_type]
-        payload = struct.pack(f">{len(values)}{fmt[1:]}", *values)
+        else:
+            if isinstance(values, (int, float)):
+                values = [values]
+            if not values:
+                raise ValueError("nothing to write")
+            type_code, fmt, size = VALUE_TYPES[value_type]
+            payload = struct.pack(f">{len(values)}{fmt[1:]}", *values)
 
         tran = self.next_tran()
         packet = header(self.node, self.my_node, PROTO_BMP5)

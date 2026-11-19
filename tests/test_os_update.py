@@ -61,5 +61,18 @@ class SendOsTests(unittest.TestCase):
         self.assertEqual(calls[-2:], [("CPU:P.CR300", 2), ("CPU:P.CR300", 6)])
 
 
+class OsCheckTests(unittest.TestCase):
+    def test_versions_compare_numerically_without_model_or_trailing_zeros(self) -> None:
+        self.assertEqual(os_update.version_tuple("CR6.14.4.0"), (14, 4))
+        self.assertEqual(os_update.version_tuple("CR1000X.Std.03.02"), (3, 2))
+        self.assertEqual(os_update.version_tuple("11.03.00"), os_update.version_tuple("CR300.11.03"))
+
+    def test_outdated_only_below_the_latest_known(self) -> None:
+        self.assertTrue(os_update.os_check("CR6", "CR6.14.4.0")["outdated"])
+        latest = os_update.LATEST_OS["CR6"][0]
+        self.assertFalse(os_update.os_check(None, f"CR6.{latest}")["outdated"])
+        self.assertEqual(os_update.os_check("CR800", "CR800.Std.32")["latest"], None)
+
+
 if __name__ == "__main__":
     unittest.main()

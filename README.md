@@ -53,7 +53,7 @@ oln --model CR6 files ls                    # drives, files, run flags
 oln --model CR6 files put Main.CR6          # files get / put / rm
 oln --model CR6 program run Main.CR6        # program status / run / stop / resume / power-up
 oln --model CR6 flash Main.CR6 --monitor 60 # compile locally, send with its libraries, run
-oln --model CR300 settings "station name"   # DevConfig settings; settings set NAME=VALUE
+oln --model CR300 settings "station name"   # settings by name; settings set NAME=VALUE
 oln --model CR6 terminal                    # the logger's terminal
 oln --model CR300 os CR300.11.03.obj        # send a new operating system
 oln capture --log run.log --fifo /tmp/cr6.key   # log ComUSB text, send keys (POSIX)
@@ -70,8 +70,10 @@ oln gui
 
 Only one program can hold a logger's port: disconnect LoggerNet (or close DevConfig) first.
 Setting names come from Device Configuration Utility's device descriptions when it is installed
-(`C:\Campbellsci\Lib\DevConfigLib`, or `$OLN_DEVCONFIG_LIB`); without them settings are shown by
-number. How each command maps onto PakBus, and what LoggerNet does for the same action, is in
+(`C:\Campbellsci\Lib\DevConfigLib`, or `$OLN_DEVCONFIG_LIB`). Without them, a logger that lists its
+settings on its terminal (the CR6 does) is read and written by those names through its `Settings`
+table, value by value and without a reset; any other is shown by number. `oln info` also compares the
+OS version with the newest one this release knows of for the model. How each command maps onto PakBus, and what LoggerNet does for the same action, is in
 [docs/pakbus.md](docs/pakbus.md).
 
 ### Reading and writing values: `get`, `set`, `watch`
@@ -106,13 +108,15 @@ whatever the running program actually declared. A table is collected the way Log
 record ranges up to a fixed end so the table can keep growing without opening a gap, with two
 requests in flight: on Windows the CR300 gives about 1700 records/s and the CR1000X about
 1600 records/s of 240-byte records. Records larger than one packet, such as `Status` and `Public`,
-are read in fragments.
+are read in fragments. `--format` is `toa5` (LoggerNet's text `.dat`), `tob1` (its binary `.dat`:
+FP2 values are written as IEEE4 and Booleans as LONG -1/0), `csv` or `jsonl`.
 
 ### The clock: `clock`
 
 The logger stores no time zone. `clock --set-utc` sets it to the host's UTC time as an adjustment
 the logger applies to itself, so the transport delay is what limits accuracy; the result is
-measured afterwards and the command exits non-zero if more than `--max-drift` seconds remain.
+measured afterwards (the CR6 applies an adjustment just after it replies, so `oln` reads again for
+up to 3 s) and the command exits non-zero if more than `--max-drift` seconds remain.
 
 ### Flashing a program: `flash`
 

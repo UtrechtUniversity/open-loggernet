@@ -52,6 +52,28 @@ class RecordFormatTests(unittest.TestCase):
         self.assertIn('"Temp(1)": 19.5, "Temp(2)": "NAN", "Ok": true', out.getvalue())
 
 
+class Tob1Tests(unittest.TestCase):
+    def test_tob1_layout_matches_a_loggernet_file(self) -> None:
+        # csdf's TOB1_Station_Daily.dat (LoggerNet): CRLF header lines, then little-endian ULONG
+        # seconds since 1990, nanoseconds and record, and IEEE4 values; 2014-04-11 is 0x2da89300.
+        out = io.BytesIO()
+        when = datetime.datetime(2014, 4, 11, tzinfo=datetime.UTC)
+        records.write_tob1(out, table(), [(7, when, {"Temp": [13.04, 1.5], "Ok": True})], {"station": "S"})
+        head, _, body = out.getvalue().rpartition(b"\r\n")
+        self.assertEqual(
+            head.split(b"\r\n"),
+            [
+                b'"TOB1","S","","","","","","Table1"',
+                b'"SECONDS","NANOSECONDS","RECORD","Temp(1)","Temp(2)","Ok"',
+                b'"SECONDS","NANOSECONDS","RN","Deg C","Deg C",""',
+                b'"","","","Avg","Avg","Smp"',
+                b'"ULONG","ULONG","ULONG","IEEE4","IEEE4","LONG"',
+            ],
+        )
+        self.assertEqual(body[:16].hex(), "0093a82d0000000007000000d7a35041")
+        self.assertEqual(body[20:], b"\xff\xff\xff\xff")
+
+
 class PortChoiceTests(unittest.TestCase):
     loggers = [pakbus.LoggerPort("COM4", "CR300", "CR300 (COM4)"), pakbus.LoggerPort("COM5", "CR6", "CR6 (COM5)")]
 

@@ -15,6 +15,7 @@ Campbell's instructions call this "more likely (although not guaranteed)" to kee
 settings than the boot-code method, which resets everything and is not implemented here.
 """
 
+import re
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -28,6 +29,34 @@ from .pakbus import (
     PakBusError,
     PakBusLink,
 )
+
+# The newest operating system Campbell publishes per model, as listed on campbellsci.com/downloads
+# on 2026-11-19. Update with each release; `os_check` compares against it.
+LATEST_OS = {
+    "CR6": ("15.0.0", "https://www.campbellsci.com/downloads/cr6-os"),
+    "CR1000X": ("9.0.0", "https://www.campbellsci.com/downloads/cr1000x-os"),
+    "CR300": ("11.03.00", "https://www.campbellsci.com/downloads/cr300-series-os"),
+    "CR350": ("1.9.0", "https://www.campbellsci.com/downloads/cr350-series-os"),
+}
+
+
+def version_tuple(text: str) -> tuple[int, ...]:
+    """ "CR6.14.4.0" -> (14, 4, 0); "CR1000X.Std.03.02" -> (3, 2); "11.03.00" -> (11, 3). The model and
+    any other word are dropped, and trailing zeros so that 11.03 and 11.03.00 compare equal."""
+    parts = [int(p) for p in text.split(".") if p.isdigit()]
+    while parts and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
+
+
+def os_check(model: str | None, os_version: str) -> dict:
+    """{"latest": version, "url": download page, "outdated": bool}; latest and url are None for a
+    model not in LATEST_OS."""
+    key = re.sub(r"[^A-Z0-9]", "", (model or os_version.split(".", 1)[0]).upper())
+    latest, url = LATEST_OS.get(key, (None, None))
+    outdated = latest is not None and version_tuple(os_version) < version_tuple(latest)
+    return {"latest": latest, "url": url, "outdated": outdated}
+
 
 # The fragment size DevConfig used for the image; each took the CR300 about 93 ms to write.
 OS_SWATH = 976

@@ -216,6 +216,18 @@ when installed; they are not part of this repository. Strings are NUL-terminated
 byte; `serial-no` is a uint4. The CR300's GOES settings use per-component offsets and are left as
 hex.
 
+### Settings by name
+
+The CR6 also names its settings itself, which needs no DevConfig library. Its terminal menu `F`,
+then `S`, lists every setting as `Name Type Range [ReadOnly]` (types String, Long, Boolean, Uint1,
+Double; 336 on serial 27946, OS 14.4.0, 2026-11-19; a long name runs into the type column, e.g.
+`DeleteCardFilesOnMismatch(1)Boolean`). BMP5 **Get Values** on table `Settings`, field `<name>`,
+reads each one (`Settings.StationName`, `Settings.Baudrate(COMUSB)`); `UID`, `CampbellCloudEnable`
+and `MQTTState` answered "permission denied". **Set Values** on the same table writes one: a Long
+as type 6, a string as type 11 (ASCII) with its bytes and a NUL, the swath being their count.
+Station Name and UTCOffset written this way read back changed, Station Name also in the Get
+Settings reply (setting 2), with no reset; both were set back.
+
 ## Operating system
 
 Device Configuration Utility 2.34's **Manage OS -> Update** took the CR300 (serial 33590) from OS

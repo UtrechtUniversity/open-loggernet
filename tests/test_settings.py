@@ -64,5 +64,33 @@ class DescriptionLibraryTests(unittest.TestCase):
             self.assertEqual(settings.load_definitions(55, 1, lib), {})
 
 
+class NamedSettingTests(unittest.TestCase):
+    def test_terminal_list_splits_on_the_type_word(self) -> None:
+        # Lines as the CR6 (OS 14.4.0) printed them for terminal F, S on 2026-11-19.
+        text = (
+            "Name                      Type       Range\r\n"
+            " StationName               String     \r\n"
+            " CPUDriveFree              Long       ReadOnly\r\n"
+            " DeleteCardFilesOnMismatch(1)Boolean    \r\n"
+            " Beacon(19) (internet)     Long       \r\n"
+            " KeepAliveMin              Long       0,5,10,15\r\n"
+            "CR6>"
+        )
+        rows = settings.parse_setting_list(text)
+        self.assertEqual(
+            [r["name"] for r in rows],
+            ["StationName", "CPUDriveFree", "DeleteCardFilesOnMismatch(1)", "Beacon(19) (internet)", "KeepAliveMin"],
+        )
+        self.assertEqual([r["read_only"] for r in rows], [False, True, False, False, False])
+        self.assertEqual(rows[2]["type"], "Boolean")
+        self.assertEqual(rows[4]["range"], "0,5,10,15")
+
+    def test_values_are_written_in_the_setting_type(self) -> None:
+        self.assertEqual(settings.named_value("String", "Bench"), ("Bench", "ascii"))
+        self.assertEqual(settings.named_value("Boolean", "true"), (-1, "long"))
+        self.assertEqual(settings.named_value("Uint1", "3"), (3, "long"))
+        self.assertEqual(settings.named_value("Float", "1.5"), (1.5, "ieee4"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -46,3 +46,30 @@ cannot be relied on to clear a table. Code 13 with an empty file name, which Log
 "Stop Program, Delete Data", stops the program and deletes its data (CR6, 2026-11-02; see
 docs/pakbus.md, File control command codes); `oln program stop --delete-data` sends it. Otherwise
 tell the runs apart by time.
+
+## A clock adjustment lands after the reply
+
+The CR6 (serial 27946, OS 14.4.0) answers a Clock command that carries an adjustment with the time
+it had before, and a Clock read sent straight after still returned that old time; one sent 0.5 s
+later returned the adjusted time, for adjustments of 10 s, 1 h, 30 days and 248 days
+(2026-11-19). `oln clock --set-utc` therefore failed every time with "offset still above 0.5 s"
+although the logger had been set. `src/openloggernet/cli.py:cmd_clock` now reads the clock again
+every 0.3 s, for up to 3 s, until the offset it asked for is reached.
+
+## Settings written by name are kept without a reset
+
+On the same CR6, BMP5 Set Values on the `Settings` table changed Station Name, UTCOffset and
+IsRouter at once: Get Values read the new values back, Station Name also in the DevConfig Get
+Settings reply (setting 2) and in `Status.StationName`, and the next calls were answered at once
+on the same port, with no sign of a reset; all three were set back (2026-11-19). DevConfig's own Set Settings saves with a commit that resets the
+logger; this path does not. Whether a setting that needs a restart to act (a port or network
+setting) takes effect before one was not tested. `oln settings set` uses this path when no DevConfig
+library is installed and the logger lists its settings on its terminal (`docs/pakbus.md`,
+"Settings by name").
+
+## Not every setting the terminal lists can be read by name
+
+Get Values on `Settings.UID`, `Settings.CampbellCloudEnable` and `Settings.MQTTState` answered
+"permission denied" on the CR6 above, while the other 333 listed settings read (2026-11-19).
+`src/openloggernet/settings.py:read_named` keeps such a setting with its error instead of failing,
+and the VS Code extension shows it read-only.

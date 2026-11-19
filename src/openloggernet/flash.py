@@ -124,21 +124,28 @@ def monitor(link: PakBusLink, seconds: float, send: bytes = b"") -> None:
     print("--- end of ComUSB output ---")
 
 
-def run(args, port: str) -> int:
-    """`oln flash`: `args` carries the program and the flash options, `port` the logger's port."""
+def run(args, port: str, result: dict | None = None) -> int:
+    """`oln flash`: `args` carries the program and the flash options, `port` the logger's port.
+    `result`, when given, receives what was sent and the program statistics read back, or "error"."""
+    result = {} if result is None else result
+
+    def fail(message: str) -> int:
+        print(message, file=sys.stderr)
+        result["error"] = message
+        return 1
+
     program = args.program.resolve()
     if not program.is_file():
-        print(f"no such program: {program}", file=sys.stderr)
-        return 1
+        return fail(f"no such program: {program}")
 
     if not args.no_compile:
         if not compile_program(program):
-            print("compilation failed - nothing was sent to the logger", file=sys.stderr)
-            return 1
+            return fail("compilation failed - nothing was sent to the logger")
 
     target = f"{args.drive}{program.name}"
     includes = [] if args.no_includes else included_files(program)
     print(f"{program.name} -> {target} via {port}")
+    result.update(program=target, port=port, includes=[], skipped=[])
 
     try:
         with PakBusLink(port, node=args.address, my_node=args.my_address, debug=args.debug) as link:
@@ -150,26 +157,26 @@ def run(args, port: str) -> int:
                 source = program.parent / Path(include.split(":", 1)[1]).name
                 if not source.is_file():
                     print(f"  {include}: no local copy next to the program, not sent")
+                    result["skipped"].append(include)
                     continue
                 if not send_file(link, source, include):
-                    return 1
+                    return fail(f"{include}: the logger refused the file")
+                result["includes"].append(include)
             if not send_file(link, program, target):
-                return 1
+                return fail(f"{target}: the logger refused the file")
 
             if args.no_run:
                 return 0
 
             code, hold_off = link.file_control(target, FILECTL_COMPILE_RUN_POWERUP)
             if code != 0:
-                print(f"file control failed, response code {code}", file=sys.stderr)
-                return 1
+                return fail(f"file control failed, response code {code}")
             print(f"compiling and running {target}" + (f" (logger asked for {hold_off} s)" if hold_off else ""))
             time.sleep(max(hold_off, 2))
 
             path = reconnect(link, args.port)
             if path is None:
-                print("the logger's USB port did not come back after the compile", file=sys.stderr)
-                return 1
+                return fail("the logger's USB port did not come back after the compile")
             if path != port:
                 print(f"logger came back on {path}")
 
@@ -186,20 +193,20 @@ def run(args, port: str) -> int:
                 time.sleep(1)
 
             if not stats or stats.get("resp_code"):
-                print("could not read compile results back from the logger", file=sys.stderr)
-                return 1
+                return fail("could not read compile results back from the logger")
 
+            result.update(stats, port=path)
             print(f"running program: {stats['program_name']}")
             print(f"compile results: {stats['compile_result'].strip() or '<empty>'}")
             failed = "error" in stats["compile_result"].lower()
+            if failed:
+                result["error"] = f"the logger did not compile {target}: {stats['compile_result'].strip()}"
 
             if args.monitor:
                 monitor(link, args.monitor, args.send.encode().decode("unicode_escape").encode("ascii"))
 
             return 1 if failed else 0
     except PakBusError as exc:
-        print(f"PakBus error: {exc}", file=sys.stderr)
-        return 1
+        return fail(f"PakBus error: {exc}")
     except serial.SerialException as exc:
-        print(f"serial error: {exc}", file=sys.stderr)
-        return 1
+        return fail(f"serial error: {exc}")

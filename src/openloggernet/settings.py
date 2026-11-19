@@ -190,3 +190,77 @@ def find(definitions: dict, key: str) -> int:
         if d.name.lower() == key.lower():
             return sid
     raise ValueError(f"no setting named {key!r}" + ("" if definitions else "; no DevConfig library, use the number"))
+
+
+# --- settings by name ----------------------------------------------------------------------------
+# Without the DevConfig library the CR6 still names its settings: terminal menu F, then S, lists
+# them (name, type, range, ReadOnly), and BMP5 Get/Set Values reach each one by name in the
+# `Settings` table. A Set Values there is kept: Station Name written this way showed up in the
+# DevConfig Get Settings reply. Confirmed on CR6 serial 27946 (OS 14.4.0) on 2026-11-19.
+
+SETTING_TYPES = ("String", "Long", "Boolean", "Uint1", "Uint2", "Uint4", "Int1", "Int2", "Float", "Double")
+_LISTED = re.compile(r"^ (\S.*?)\s*\b(" + "|".join(SETTING_TYPES) + r")\b\s*(.*?)\s*$")
+
+
+def parse_setting_list(text: str) -> list[dict]:
+    """The terminal's settings list as [{name, type, range, read_only}]. Long names run into the
+    type column ("DeleteCardFilesOnMismatch(1)Boolean"), so the type word splits the line."""
+    rows = []
+    for line in text.splitlines():
+        match = _LISTED.match(line)
+        if match:
+            name, kind, rest = match.groups()
+            read_only = rest.endswith("ReadOnly")
+            rows.append(
+                {"name": name, "type": kind, "range": rest.removesuffix("ReadOnly").strip(), "read_only": read_only}
+            )
+    return rows
+
+
+def _terminal(link, tran: int, keys: bytes, timeout: float) -> str:
+    """Send `keys` and read until the logger is quiet at a prompt (a line ending in > or :)."""
+    import time
+
+    link.terminal_write(tran, keys)
+    out = bytearray()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        chunk = link.terminal_read(tran, 0.3)
+        out.extend(chunk)
+        if not chunk and out.rstrip().endswith((b">", b":")):
+            break
+    return out.decode("latin-1")
+
+
+def list_named(link) -> list[dict]:
+    """Every setting the logger names on its terminal; [] when its terminal has no such list."""
+    tran, _ = link.terminal_open()
+    menu = _terminal(link, tran, b"F\r", 5)
+    if "S: Settings" not in menu:
+        _terminal(link, tran, b"\r", 2)
+        return []
+    return parse_setting_list(_terminal(link, tran, b"S\r", 20))
+
+
+def read_named(link) -> list[dict]:
+    """`list_named` with each setting's current value (the logger's own formatting), or an error."""
+    from .pakbus import PakBusError
+
+    rows = list_named(link)
+    for row in rows:
+        try:
+            row["value"] = link.get_values("Settings", row["name"])[0]
+        except PakBusError as exc:
+            row["value"], row["error"] = None, str(exc)
+    return rows
+
+
+def named_value(kind: str, text: str) -> tuple[object, str]:
+    """(value, Set Values type) for writing `text` to a setting of terminal type `kind`."""
+    if kind == "String":
+        return text, "ascii"
+    if kind == "Boolean":
+        return (-1 if text.strip().lower() in ("1", "-1", "true", "yes", "on") else 0), "long"
+    if kind in ("Float", "Double"):
+        return float(text), "ieee4" if kind == "Float" else "ieee8"
+    return int(text), "long"
