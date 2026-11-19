@@ -105,7 +105,6 @@ def monitor(link: PakBusLink, seconds: float, send: bytes = b"") -> None:
     """
     if send:
         link.port.write(send)
-        link.port.flush()
     print(f"--- ComUSB output for {seconds:g} s ---")
     deadline = time.monotonic() + seconds
     pending = bytearray()

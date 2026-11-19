@@ -12,6 +12,20 @@ class PakBusTests(unittest.TestCase):
         body = packet + pakbus.signature_nullifier(pakbus.signature(packet))
         self.assertEqual(pakbus.signature(body), 0)
 
+    def test_stalled_write_is_a_pakbus_timeout(self) -> None:
+        class StalledPort:
+            def write(self, data: bytes) -> int:
+                raise pakbus.serial.SerialTimeoutException("Write timeout")
+
+            def flush(self) -> None:
+                raise AssertionError("flush() is tcdrain(), which can block forever")
+
+        link = object.__new__(pakbus.PakBusLink)
+        link.debug = False
+        link.port = StalledPort()  # pyrefly: ignore[bad-assignment]
+        with self.assertRaises(pakbus.PakBusTimeout):
+            link.send(b"\x00")
+
     def test_quote_round_trip(self) -> None:
         data = b"A\xbcB\xbdC"
         self.assertEqual(pakbus.unquote(pakbus.quote(data)), data)

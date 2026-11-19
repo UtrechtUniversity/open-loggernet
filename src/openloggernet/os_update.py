@@ -5,7 +5,8 @@ This is what Device Configuration Utility 2.34's "Manage OS -> Update" did to th
 
 1. note the running and the power-up program (Get Prog Stats);
 2. File Control 8 with an empty file name: the program stops; the logger resets, hold-off 26 s;
-3. File Download of the `.obj` image to `CPU:` under its own name, 976 bytes per fragment;
+3. File Download of the `.obj` image to `CPU:` under its own name, 976 bytes per fragment
+   (`oln` uses the platform's DEFAULT_SWATH: 976 on Windows, 256 elsewhere);
 4. File Control 1 on the image: the logger loads it as its operating system, hold-off 40 s, and
    comes back up on the new OS with the image gone from `CPU:`;
 5. File Control 2 on the old power-up program and 6 on the old running program, which put both
@@ -58,10 +59,6 @@ def os_check(model: str | None, os_version: str) -> dict:
     return {"latest": latest, "url": url, "outdated": outdated}
 
 
-# The fragment size DevConfig used for the image; each took the CR300 about 93 ms to write.
-OS_SWATH = 976
-
-
 def _wait_and_reconnect(link: PakBusLink, hold_off: int, port: str | None, say: Callable[[str], None]) -> None:
     if hold_off:
         say(f"logger asked for {hold_off} s")
@@ -104,7 +101,9 @@ def send_os(
     after = before
     try:
         say(f"sending {image.name} ({len(data)} bytes)")
-        code = link.file_download(target, data, swath=OS_SWATH, progress=progress, timeout=30)
+        # Default swath: DevConfig's 976 bytes is only answered from Windows; from a Mac the CR6 dropped
+        # the first 976-byte fragment without a reply (2026-11-19, docs/lessons.md).
+        code = link.file_download(target, data, progress=progress, timeout=30)
         if code != 0:
             raise PakBusError(f"{target}: download refused, response code {code}")
 

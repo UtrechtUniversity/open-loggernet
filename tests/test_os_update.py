@@ -23,6 +23,7 @@ class FakeLogger:
 
     def file_download(self, name: str, data: bytes, **kw) -> int:
         self.calls.append((name, "download", len(data)))
+        self.download_kw = kw
         return 0
 
 
@@ -55,6 +56,11 @@ class SendOsTests(unittest.TestCase):
                 ("CPU:P.CR300", 6),
             ],
         )
+
+    def test_image_uses_the_platform_swath(self) -> None:
+        # 976-byte fragments go unanswered from a Mac (docs/lessons.md); the platform default applies.
+        link = self.run_send(0)
+        self.assertNotIn("swath", link.download_kw)
 
     def test_programs_come_back_when_the_image_is_refused(self) -> None:
         calls = self.run_send(13).calls

@@ -827,7 +827,8 @@ class PakBusLink:
         self.model = port_model(self._port_name)
         if not self._limit_override:
             self.max_reply_frame = MAX_REPLY_FRAME.get(self.model or "")
-        self.port: serial.Serial = serial.Serial(self._port_name, self.baudrate, timeout=0.1)
+        # write_timeout: a logger that stops reading mid-reset must not block a write forever.
+        self.port: serial.Serial = serial.Serial(self._port_name, self.baudrate, timeout=0.1, write_timeout=5)
 
     def close(self) -> None:
         if not hasattr(self, "port"):
@@ -852,8 +853,12 @@ class PakBusLink:
     def send(self, packet: bytes) -> None:
         if self.debug:
             print(f"  TX {packet.hex(' ')}")
-        self.port.write(frame(packet))
-        self.port.flush()
+        # No flush(): on POSIX it is tcdrain(), which has no timeout and hung `oln os` for good when
+        # a CR6 stopped reading during its reset (2026-11-19). write() already hands the bytes over.
+        try:
+            self.port.write(frame(packet))
+        except serial.SerialTimeoutException as exc:
+            raise PakBusTimeout("timed out writing to the logger") from exc
 
     def receive(self, timeout: float = 5.0) -> Packet | None:
         """Return the next well-formed packet, or None on timeout.
